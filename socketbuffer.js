@@ -11,7 +11,7 @@ class SocketBuffer {
             this.buffer = this.buffer.slice(this.offset);
             this.offset = 0;
         } else {
-            this.buffer = new Buffer.from([]);
+            this.buffer = Buffer.from([]);
             this.offset = 0;
         }
     }

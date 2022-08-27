@@ -207,7 +207,7 @@ class VncClient extends Events {
         if ((this._frameBufferReady || full) && this._connection && !this._rects) {
 
             // Request data
-            const message = new Buffer(10);
+            const message = Buffer.alloc(10);
             message.writeUInt8(3); // Message type
             message.writeUInt8(full ? 0 : incremental, 1); // Incremental
             message.writeUInt16BE(x, 2); // X-Position
@@ -246,10 +246,10 @@ class VncClient extends Events {
             if (this._socketBuffer.includes(0x02) && this._password) {
                 this._log('Password provided and server support VNC auth. Choosing VNC auth.', true);
                 this._expectingChallenge = true;
-                this._connection.write(new Buffer([0x02]));
+                this._connection.write(Buffer.alloc([0x02]));
             } else if (this._socketBuffer.includes(1)) {
                 this._log('Password not provided or server does not support VNC auth. Trying none.', true);
-                this._connection.write(new Buffer([0x01]));
+                this._connection.write(Buffer.alloc([0x01]));
                 if (this._version === '3.7') {
                     this._waitingServerInit = true;
                 } else {
@@ -289,16 +289,16 @@ class VncClient extends Events {
 
         } else {
 
-            const key = new Buffer(8);
+            const key = Buffer.alloc(8);
             key.fill(0);
             key.write(this._password.slice(0, 8));
 
             this.reverseBits(key);
 
-            const des1 = crypto.createCipheriv('des', key, new Buffer(8));
-            const des2 = crypto.createCipheriv('des', key, new Buffer(8));
+            const des1 = crypto.createCipheriv('des', key, Buffer.alloc(8));
+            const des2 = crypto.createCipheriv('des', key, Buffer.alloc(8));
 
-            const response = new Buffer(16);
+            const response = Buffer.alloc(16);
 
             response.fill(des1.update(this._socketBuffer.buffer.slice(0, 8)), 0, 8);
             response.fill(des2.update(this._socketBuffer.buffer.slice(8, 16)), 8, 16);
@@ -381,7 +381,7 @@ class VncClient extends Events {
      * Update the frame buffer size according to client width and height (RGBA)
      */
     updateFbSize() {
-        this.fb = new Buffer(this.clientWidth * this.clientHeight * 4);
+        this.fb = Buffer.alloc(this.clientWidth * this.clientHeight * 4);
     }
 
     /**
@@ -392,7 +392,7 @@ class VncClient extends Events {
 
         this._log(`Requesting PixelFormat change to ColorMap (8 bits).`);
 
-        const message = new Buffer(20);
+        const message = Buffer.alloc(20);
         message.writeUInt8(0); // Tipo da mensagem
         message.writeUInt8(0, 1); // Padding
         message.writeUInt8(0, 2); // Padding
@@ -428,7 +428,7 @@ class VncClient extends Events {
 
         this._log('Sending encodings.');
         // If this._set8BitColor is set, only copyrect and raw encodings are supported
-        const message = new Buffer(4 + ((!this._set8BitColor ? this.encodings.length : 2) * 4));
+        const message = Buffer.alloc(4 + ((!this._set8BitColor ? this.encodings.length : 2) * 4));
         message.writeUInt8(2); // Message type
         message.writeUInt8(0, 1); // Padding
         message.writeUInt16BE(!this._set8BitColor ? this.encodings.length : 2, 2); // Padding
@@ -716,7 +716,7 @@ class VncClient extends Events {
      */
     sendKeyEvent(key, down = false) {
 
-        const message = new Buffer(8);
+        const message = Buffer.alloc(8);
         message.writeUInt8(4); // Message type
         message.writeUInt8(down ? 1 : 0, 1); // Down flag
         message.writeUInt8(0, 2); // Padding
@@ -756,7 +756,7 @@ class VncClient extends Events {
         buttonMask += button7 ? 2 : 0;
         buttonMask += button8 ? 1 : 0;
 
-        const message = new Buffer(6);
+        const message = Buffer.alloc(6);
         message.writeUInt8(5); // Message type
         message.writeUInt8(buttonMask, 1); // Button Mask
         const reladd=this._relativePointer?0x7FFF:0;
@@ -773,8 +773,8 @@ class VncClient extends Events {
      */
     clientCutText(text) {
 
-        const textBuffer = new Buffer.from(text, 'latin1');
-        const message = new Buffer(8 + textBuffer.length);
+        const textBuffer = Buffer.from(text, 'latin1');
+        const message = Buffer.alloc(8 + textBuffer.length);
         message.writeUInt8(6); // Message type
         message.writeUInt8(0, 1); // Padding
         message.writeUInt8(0, 2); // Padding
@@ -787,7 +787,7 @@ class VncClient extends Events {
     }
 
     sendAudio(enable) {
-        const message = new Buffer(4);
+        const message = Buffer.alloc(4);
         message.writeUInt8(clientMsgTypes.qemuAudio); // Message type
         message.writeUInt8(1, 1); // Submessage Type
         message.writeUInt16BE(enable?0:1, 2); // Operation
@@ -795,7 +795,7 @@ class VncClient extends Events {
     }
 
     sendAudioConfig(channels, frequency) {
-        const message = new Buffer(10);
+        const message = Buffer.alloc(10);
         message.writeUInt8(clientMsgTypes.qemuAudio); // Message type
         message.writeUInt8(1, 1); // Submessage Type
         message.writeUInt16BE(2, 2); // Operation
