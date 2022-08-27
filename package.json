@@ -1,22 +1,18 @@
 {
-  "name": "vnc-rfb-client",
-  "version": "0.1.3",
-  "dependencies": {},
-  "main": "vncclient.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "author": "Filipe Calaça Barbosa",
+  "name": "@lucidvm/rfb",
+  "version": "0.3.0",
+  "description": "Pure nodejs VNC (RFC 6143 / RFB Protocol) client, based on vnc-rfb-client",
+  "main": "index.js",
+  "author": "Filipe Calaça Barbosa, ayunami2000, dither",
   "license": "MIT",
+  "dependencies": {},
   "devDependencies": {},
-  "description": "Pure nodejs VNC (RFC 6143 / RFB Protocol) client",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/filipecbmoc/vnc-rfb-client.git"
+    "url": "git+https://github.com/lucidvm/rfb.git"
   },
   "bugs": {
-    "url": "https://github.com/filipecbmoc/vnc-rfb-client/issues"
+    "url": "https://github.com/lucidvm/rfb/issues"
   },
-  "homepage": "https://github.com/filipecbmoc/vnc-rfb-client#readme"
+  "homepage": "https://github.com/lucidvm/rfb#readme"
 }
