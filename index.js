@@ -246,10 +246,10 @@ class VncClient extends Events {
             if (this._socketBuffer.includes(0x02) && this._password) {
                 this._log('Password provided and server support VNC auth. Choosing VNC auth.', true);
                 this._expectingChallenge = true;
-                this._connection.write(Buffer.alloc([0x02]));
+                this._connection.write(Buffer.from([0x02]));
             } else if (this._socketBuffer.includes(1)) {
                 this._log('Password not provided or server does not support VNC auth. Trying none.', true);
-                this._connection.write(Buffer.alloc([0x01]));
+                this._connection.write(Buffer.from([0x01]));
                 if (this._version === '3.7') {
                     this._waitingServerInit = true;
                 } else {
@@ -784,7 +784,7 @@ class VncClient extends Events {
         this._cursor.posX = xPosition;
         this._cursor.posY = yPosition;
 
-        this.sendData(message, false);
+        this._connection.write(message);
 
     }
 
