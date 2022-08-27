@@ -728,7 +728,6 @@ class VncClient extends Events {
 
     }
 
-
     /**
      * Send pointer event (mouse or touch)
      * @param xPosition - X Position
@@ -764,6 +763,28 @@ class VncClient extends Events {
         message.writeUInt16BE(yPosition+reladd, 4); // Y Position
 
         this._connection.write(message);
+
+    }
+
+    /**
+     * Send a raw pointer event
+     * @param xPosition - X Position
+     * @param yPosition - Y Position
+     * @param mask - Raw RFB button mask
+     */
+     sendPointerEventRaw(xPosition, yPosition, buttonMask) {
+
+        const message = Buffer.alloc(6);
+        message.writeUInt8(clientMsgTypes.pointerEvent); // Message type
+        message.writeUInt8(buttonMask, 1); // Button Mask
+        const reladd = this._relativePointer ? 0x7FFF : 0;
+        message.writeUInt16BE(xPosition + reladd, 2); // X Position
+        message.writeUInt16BE(yPosition + reladd, 4); // Y Position
+
+        this._cursor.posX = xPosition;
+        this._cursor.posY = yPosition;
+
+        this.sendData(message, false);
 
     }
 
