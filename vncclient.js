@@ -145,6 +145,8 @@ class VncClient extends Events {
 
         this._connection = net.connect(options.port || 5900, options.host);
 
+        this._connection.setNoDelay();
+
         this._connection.on('connect', () => {
             this._connected = true;
             this.emit('connected');
