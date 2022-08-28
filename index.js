@@ -509,6 +509,54 @@ class VncClient extends Events {
     }
 
     /**
+     * Gets the pseudocursor framebuffer
+     */
+    _getPseudoCursor() {
+        if (!this._cursor.width) return {
+            width: 1,
+            height: 1,
+            data: Buffer.alloc(4)
+        };
+        const { width, height, bitmask, cursorPixels } = this._cursor;
+        const data = Buffer.alloc(height * width * 4);
+        for (var y = 0; y < height; y++) {
+            for (var x = 0; x < width; x++) {
+                const offset = ((y * width) + x) * 4;
+                const active = (bitmask[Math.floor((width + 7) / 8) * y + Math.floor(x / 8)] >> (7 - x % 8)) & 1;
+                if (active) {
+                    switch (this.pixelFormat.bitsPerPixel) {
+                        case 8:
+                            console.log(8)
+                            const index = cursorPixels.readUInt8(offset);
+                            const color = this._colorMap[index] | 0xFF;
+                            data.writeIntBE(color, offset, 4);
+                            break;
+                        case 32:
+                            // TODO: compatibility with VMware actually using the alpha channel
+                            const b = cursorPixels.readUInt8(offset);
+                            const g = cursorPixels.readUInt8(offset + 1);
+                            const r = cursorPixels.readUInt8(offset + 2);
+                            data.writeUInt8(r, offset);
+                            data.writeUInt8(g, offset + 1);
+                            data.writeUInt8(b, offset + 2);
+                            data.writeUInt8(0xFF, offset + 3);
+                            break;
+                        default:
+                            data.writeIntBE(cursorPixels.readIntBE(offset, this.pixelFormat.bitsPerPixel / 8),
+                                offset, this.pixelFormat.bitsPerPixel / 8);
+                            break;
+                    }
+                }
+            }
+        }
+        return {
+            x: this._cursor.x,
+            y: this._cursor.y,
+            width, height, data
+        };
+    }
+
+    /**
      * Handle a rects of update message
      */
     async _handleRect() {
@@ -541,6 +589,7 @@ class VncClient extends Events {
                 this._cursor.cursorPixels = this._socketBuffer.readNBytesOffset(dataSize);
                 this._cursor.bitmask = this._socketBuffer.readNBytesOffset(bitmaskSize);
                 rect.data = Buffer.concat([this._cursor.cursorPixels, this._cursor.bitmask]);
+                this.emit('cursorChanged', this._getPseudoCursor());
             } else if (rect.encoding === encodings.pseudoDesktopSize) {
                 this._log('Frame Buffer size change requested by the server', true);
                 this.clientHeight = rect.height;
