@@ -549,6 +549,7 @@ class VncClient extends Events {
                 this.emit('desktopSizeChanged', {width: this.clientWidth, height: this.clientHeight});
             } else if (this._decoders[rect.encoding]) {
                 await this._decoders[rect.encoding].decode(rect, this.fb, this.pixelFormat.bitsPerPixel, this._colorMap, this.clientWidth, this.clientHeight, this._socketBuffer, this.pixelFormat.depth);
+                this.emit('rectUpdateProcessed', rect);
             } else {
                 this._log('Non supported update received. Encoding: ' + rect.encoding);
             }
