@@ -3,3 +3,7 @@ ffmpeg.exe
 video.mp4
 node_modules
 .idea
+
+# parcel
+.parcel-cache/
+dist/
