@@ -2,11 +2,11 @@ import { SocketBuffer } from "../socketbuffer";
 import { IRectDecoder } from "./decoder";
 import { applyColor, getPixelBytePos } from "./util";
 
-import { VncRectangle, Color3 } from "../types";
+import { RectangleWithData, Color3 } from "../types";
 
 export class HextileDecoder implements IRectDecoder {
 
-	async decode(rect: VncRectangle, fb: Buffer, bitsPerPixel: number, colorMap: Array<Color3>, screenW: number, screenH: number, socket: SocketBuffer, depth: number): Promise<void> {
+	async decode(rect: RectangleWithData, fb: Buffer, bitsPerPixel: number, colorMap: Array<Color3>, screenW: number, screenH: number, socket: SocketBuffer, depth: number): Promise<void> {
 		return new Promise(async (resolve, reject) => {
 			const initialOffset = socket.offset;
 			let dataSize = 0;

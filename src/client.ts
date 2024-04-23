@@ -15,7 +15,7 @@ import * as crypto from 'node:crypto';
 
 import { SocketBuffer } from './socketbuffer.js';
 
-import { VncRectangle, Color3, PixelFormat, Cursor } from './types.js';
+import { RectangleWithData, Color3, PixelFormat, Cursor } from './types.js';
 
 export class VncClient extends EventEmitter {
 	// These are in no particular order.
@@ -98,7 +98,6 @@ export class VncClient extends EventEmitter {
 
 	/**
 	 * Return if client is connected
-	 * @returns {boolean}
 	 */
 	get connected() {
 		return this._connected;
@@ -106,7 +105,6 @@ export class VncClient extends EventEmitter {
 
 	/**
 	 * Return if client is authenticated
-	 * @returns {boolean}
 	 */
 	get authenticated() {
 		return this._authenticated;
@@ -114,7 +112,6 @@ export class VncClient extends EventEmitter {
 
 	/**
 	 * Return negotiated protocol version
-	 * @returns {string}
 	 */
 	get protocolVersion() {
 		return this._version;
@@ -122,7 +119,6 @@ export class VncClient extends EventEmitter {
 
 	/**
 	 * Return the local port used by the client
-	 * @returns {number}
 	 */
 	get localPort() {
 		return this._connection ? this._connection?.localPort : 0;
@@ -164,9 +160,8 @@ export class VncClient extends EventEmitter {
 
 	/**
 	 * Timer used to limit the rate of frame update requests according to configured FPS
-	 * @private
 	 */
-	_fbTimer() {
+	private _fbTimer() {
 		this._timerPointer = setTimeout(() => {
 			this._fbTimer();
 			if (this._firstFrameReceived && !this._processingFrame && this._fps > 0) {
@@ -301,9 +296,8 @@ export class VncClient extends EventEmitter {
 
 	/**
 	 * Handle handshake msg
-	 * @private
 	 */
-	_handleHandshake() {
+	private _handleHandshake() {
 		// Handshake, negotiating protocol version
 		if (this._socketBuffer.toString() === consts.versionString.V3_003) {
 			this._log('Sending 3.3', true);
@@ -344,9 +338,8 @@ export class VncClient extends EventEmitter {
 
 	/**
 	 * Handle VNC auth challenge
-	 * @private
 	 */
-	_handleAuthChallenge() {
+	private _handleAuthChallenge() {
 		if (this._challengeResponseSent) {
 			// Challenge response already sent. Checking result.
 
@@ -404,10 +397,8 @@ export class VncClient extends EventEmitter {
 
 	/**
 	 * Handle server init msg
-	 * @returns {Promise<void>}
-	 * @private
 	 */
-	async _handleServerInit() {
+	private async _handleServerInit() {
 		this._waitingServerInit = false;
 
 		await this._socketBuffer.waitBytes(18);
@@ -456,9 +447,8 @@ export class VncClient extends EventEmitter {
 
 	/**
 	 * Request the server to change to 8bit color format (Color palette). Only works with Raw encoding.
-	 * @private
 	 */
-	_setPixelFormatToColorMap() {
+	private _setPixelFormatToColorMap() {
 		this._log(`Requesting PixelFormat change to ColorMap (8 bits).`);
 
 		const message = Buffer.alloc(20);
@@ -490,9 +480,8 @@ export class VncClient extends EventEmitter {
 
 	/**
 	 * Send supported encodings
-	 * @private
 	 */
-	_sendEncodings() {
+	private _sendEncodings() {
 		//this._log('Sending encodings.');
 		// If this._set8BitColor is set, only copyrect and raw encodings are supported
 		const message = Buffer.alloc(4 + (!this._set8BitColor ? this.encodings.length : 2) * 4);
@@ -517,9 +506,8 @@ export class VncClient extends EventEmitter {
 
 	/**
 	 * Send client init msg
-	 * @private
 	 */
-	_sendClientInit() {
+	private _sendClientInit() {
 		//this._log(`Sending clientInit`);
 		this._waitingServerInit = true;
 		// Shared bit set
@@ -528,10 +516,8 @@ export class VncClient extends EventEmitter {
 
 	/**
 	 * Handle data msg
-	 * @returns {Promise<void>}
-	 * @private
 	 */
-	async _handleData() {
+	private async _handleData() {
 		if (!this._rects) {
 			switch (this._socketBuffer.buffer[0]) {
 				case consts.serverMsgTypes.fbUpdate:
@@ -560,10 +546,8 @@ export class VncClient extends EventEmitter {
 
 	/**
 	 * Cut message (text was copied to clipboard on server)
-	 * @returns {Promise<void>}
-	 * @private
 	 */
-	async _handleCutText() {
+	private async _handleCutText(): Promise<void> {
 		this._socketBuffer.setOffset(4);
 		await this._socketBuffer.waitBytes(1);
 		const length = this._socketBuffer.readUInt32BE();
@@ -575,7 +559,7 @@ export class VncClient extends EventEmitter {
 	/**
 	 * Gets the pseudocursor framebuffer
 	 */
-	_getPseudoCursor() {
+	private _getPseudoCursor() {
 		if (!this._cursor.width)
 			return {
 				width: 1,
@@ -630,13 +614,13 @@ export class VncClient extends EventEmitter {
 	/**
 	 * Handle a rects of update message
 	 */
-	async _handleRect() {
+	private async _handleRect() {
 		this._processingFrame = true;
 		const sendFbUpdate = this._rects;
 
 		while (this._rects) {
 			await this._socketBuffer.waitBytes(12);
-			const rect: VncRectangle = {
+			const rect: RectangleWithData = {
 				x: this._socketBuffer.readUInt16BE(),
 				y: this._socketBuffer.readUInt16BE(),
 				width: this._socketBuffer.readUInt16BE(),
@@ -712,7 +696,7 @@ export class VncClient extends EventEmitter {
 		}
 	}
 
-	async _handleFbUpdate() {
+	private async _handleFbUpdate() {
 		this._socketBuffer.setOffset(2);
 		this._rects = this._socketBuffer.readUInt16BE();
 		this._log('Frame update received. Rects: ' + this._rects, true);
@@ -721,10 +705,8 @@ export class VncClient extends EventEmitter {
 
 	/**
 	 * Handle setColorMap msg
-	 * @returns {Promise<void>}
-	 * @private
 	 */
-	async _handleSetColorMap() {
+	private async _handleSetColorMap(): Promise<void> {
 		this._socketBuffer.setOffset(2);
 		let firstColor = this._socketBuffer.readUInt16BE();
 		const numColors = this._socketBuffer.readUInt16BE();
@@ -912,9 +894,8 @@ export class VncClient extends EventEmitter {
 	 * Print log info
 	 * @param text
 	 * @param debug
-	 * @private
 	 */
-	_log(text: string, debug = false) {
+	private _log(text: string, debug = false) {
 		if (!debug || (debug && this.debug)) {
 			console.log(text);
 		}

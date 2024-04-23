@@ -5,7 +5,7 @@ export type Rect = {
 	height: number,
 }
 
-export type VncRectangle = Rect & {
+export type RectangleWithData = Rect & {
 	encoding: number,
 	data: Buffer | null // ?
 };
