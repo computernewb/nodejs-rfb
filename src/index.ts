@@ -1,3 +1,3 @@
 /// <reference types="node" />
 
-export * from './client.js';
+export { VncClient } from './client';
