@@ -8,8 +8,7 @@
   "types": "./dist/index.d.ts",
   "type": "module",
   "scripts": {
-    "build": "parcel build src/index.ts --target node --target types",
-    "install": "yarn build"
+    "build": "parcel build src/index.ts --target node --target types"
   },
   "targets": {
     "types": {},
