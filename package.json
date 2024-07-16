@@ -10,6 +10,12 @@
   "scripts": {
     "build": "parcel build src/index.ts --target node --target types"
   },
+  "files": [
+    "./dist",
+    "README.md",
+    "README.fork.md",
+    "LICENSE"
+  ],
   "targets": {
     "types": {},
     "node": {
