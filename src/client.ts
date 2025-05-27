@@ -738,7 +738,7 @@ export class VncClient extends EventEmitter {
 
 			await this._socketBuffer.waitBytes(length);
 
-			let audioBuffer = this._socketBuffer.readNBytes(length);
+			let audioBuffer = this._socketBuffer.readNBytesOffset(length);
 
 			this._audioData = audioBuffer;
 		}
