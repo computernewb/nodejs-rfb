@@ -764,6 +764,8 @@ export class VncClient extends EventEmitter {
 			clearInterval(this._timerPointer);
 		}
 
+		this._audioNegotiated = false;
+
 		this._timerPointer = null;
 
 		//this._connection = null;
