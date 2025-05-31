@@ -1,4 +1,3 @@
-
 import { IRectDecoder } from './decoders/decoder.js';
 import { HextileDecoder } from './decoders/hextile.js';
 import { RawDecoder } from './decoders/raw.js';
@@ -24,8 +23,8 @@ export class VncClient extends EventEmitter {
 
 	private _connected: boolean = false;
 	private _authenticated: boolean = false;
-	private _version: string = "";
-	private _password: string = "";
+	private _version: string = '';
+	private _password: string = '';
 
 	private _audioChannels: number = 2;
 	private _audioFrequency: number = 22050;
@@ -36,7 +35,7 @@ export class VncClient extends EventEmitter {
 
 	private _fps: number;
 	private _timerInterval: number;
-	private _timerPointer : NodeJS.Timeout|null = null;
+	private _timerPointer: NodeJS.Timeout | null = null;
 
 	public fb: Buffer = Buffer.from([]);
 
@@ -54,9 +53,11 @@ export class VncClient extends EventEmitter {
 
 	public bigEndianFlag: boolean = false;
 
+	private _audioNegotiated = false;
+
 	public clientWidth: number = 0;
 	public clientHeight: number = 0;
-	public clientName: string = "";
+	public clientName: string = '';
 
 	public pixelFormat: PixelFormat = {
 		bitsPerPixel: 0,
@@ -87,7 +88,7 @@ export class VncClient extends EventEmitter {
 
 	public encodings: number[];
 
-	private _connection: net.Socket|null = null;
+	private _connection: net.Socket | null = null;
 	private _socketBuffer: SocketBuffer;
 
 	static get consts() {
@@ -538,7 +539,9 @@ export class VncClient extends EventEmitter {
 					break;
 
 				case consts.serverMsgTypes.qemuAudio:
-					await this._handleQemuAudio();
+					while (this._socketBuffer.buffer[0] === consts.serverMsgTypes.qemuAudio) {
+						await this._handleQemuAudio();
+					}
 					break;
 			}
 		}
@@ -568,8 +571,7 @@ export class VncClient extends EventEmitter {
 			};
 		const { width, height, bitmask, cursorPixels } = this._cursor;
 
-		if(bitmask == null || cursorPixels == null)
-			throw new Error('No cursor data to get!');
+		if (bitmask == null || cursorPixels == null) throw new Error('No cursor data to get!');
 
 		const data = Buffer.alloc(height * width * 4);
 		for (var y = 0; y < height; y++) {
@@ -630,8 +632,11 @@ export class VncClient extends EventEmitter {
 			};
 
 			if (rect.encoding === consts.encodings.pseudoQemuAudio) {
-				this.sendAudio(true);
-				this.sendAudioConfig(this._audioChannels, this._audioFrequency); //todo: future: setFrequency(...) to update mid thing
+				if (!this._audioNegotiated) {
+					this.sendAudio(true);
+					this.sendAudioConfig(this._audioChannels, this._audioFrequency); //todo: future: setFrequency(...) to update mid thing
+					this._audioNegotiated = true;
+				}
 			} else if (rect.encoding === consts.encodings.pseudoQemuPointerMotionChange) {
 				this._relativePointer = rect.x == 0;
 			} else if (rect.encoding === consts.encodings.pseudoCursor) {
@@ -719,7 +724,7 @@ export class VncClient extends EventEmitter {
 			this._colorMap[firstColor] = {
 				r: Math.floor((this._socketBuffer.readUInt16BE() / 65535) * 255),
 				g: Math.floor((this._socketBuffer.readUInt16BE() / 65535) * 255),
-				b: Math.floor((this._socketBuffer.readUInt16BE() / 65535) * 255),
+				b: Math.floor((this._socketBuffer.readUInt16BE() / 65535) * 255)
 			};
 			firstColor++;
 		}
@@ -872,6 +877,7 @@ export class VncClient extends EventEmitter {
 	}
 
 	sendAudio(enable: boolean) {
+		console.log('[audio] sendAudio →', enable ? 'ENABLE' : 'DISABLE');
 		const message = Buffer.alloc(4);
 		message.writeUInt8(consts.clientMsgTypes.qemuAudio); // Message type
 		message.writeUInt8(1, 1); // Submessage Type
@@ -880,6 +886,7 @@ export class VncClient extends EventEmitter {
 	}
 
 	sendAudioConfig(channels: number, frequency: number) {
+		console.log('[audio] sendAudioConfig → format=S16LE, channels=', channels, 'freq=', frequency);
 		const message = Buffer.alloc(10);
 		message.writeUInt8(consts.clientMsgTypes.qemuAudio); // Message type
 		message.writeUInt8(1, 1); // Submessage Type
