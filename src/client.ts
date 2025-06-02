@@ -27,7 +27,7 @@ export class VncClient extends EventEmitter {
 	private _password: string = '';
 
 	private _audioChannels: number = 2;
-	private _audioFrequency: number = 22050;
+	private _audioFrequency: number = 48000;
 
 	private _rects: number = 0;
 
@@ -143,7 +143,7 @@ export class VncClient extends EventEmitter {
 				: [consts.encodings.copyRect, consts.encodings.zrle, consts.encodings.hextile, consts.encodings.raw, consts.encodings.pseudoDesktopSize];
 
 		this._audioChannels = options.audioChannels || 2;
-		this._audioFrequency = options.audioFrequency || 22050;
+		this._audioFrequency = options.audioFrequency || 48000;
 
 		this._rects = 0;
 
@@ -777,7 +777,7 @@ export class VncClient extends EventEmitter {
 		this._password = '';
 
 		this._audioChannels = 2;
-		this._audioFrequency = 22050;
+		this._audioFrequency = 48000;
 
 		this._handshaked = false;
 
