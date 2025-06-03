@@ -1,4 +1,3 @@
-
 import { IRectDecoder } from './decoders/decoder.js';
 import { HextileDecoder } from './decoders/hextile.js';
 import { RawDecoder } from './decoders/raw.js';
@@ -11,11 +10,13 @@ import { EventEmitter } from 'node:events';
 import { consts } from './constants.js';
 
 import * as net from 'node:net';
-import * as crypto from 'node:crypto';
 
 import { SocketBuffer } from './socketbuffer.js';
 
 import { RectangleWithData, Color3, PixelFormat, Cursor } from './types.js';
+import { ISecurityType } from './security/securitytype.js';
+import { NoneSecurityType } from './security/none.js';
+import { VncSecurityType } from './security/vnc.js';
 
 export class VncClient extends EventEmitter {
 	// These are in no particular order.
@@ -24,8 +25,8 @@ export class VncClient extends EventEmitter {
 
 	private _connected: boolean = false;
 	private _authenticated: boolean = false;
-	private _version: string = "";
-	private _password: string = "";
+	private _version: string = '';
+	private _auth: object = {};
 
 	private _audioChannels: number = 2;
 	private _audioFrequency: number = 22050;
@@ -33,14 +34,15 @@ export class VncClient extends EventEmitter {
 	private _rects: number = 0;
 
 	private _decoders: Array<IRectDecoder> = [];
+	private _securityTypes: Array<ISecurityType> = [];
 
 	private _fps: number;
 	private _timerInterval: number;
-	private _timerPointer : NodeJS.Timeout|null = null;
+	private _timerPointer: NodeJS.Timeout | null = null;
 
 	public fb: Buffer = Buffer.from([]);
 
-	private _handshaked: boolean = false;
+	private _waitingSecurityTypes: boolean = false;
 	private _waitingServerInit: boolean = false;
 	private _expectingChallenge: boolean = false;
 	private _challengeResponseSent: boolean = false;
@@ -56,7 +58,7 @@ export class VncClient extends EventEmitter {
 
 	public clientWidth: number = 0;
 	public clientHeight: number = 0;
-	public clientName: string = "";
+	public clientName: string = '';
 
 	public pixelFormat: PixelFormat = {
 		bitsPerPixel: 0,
@@ -85,9 +87,11 @@ export class VncClient extends EventEmitter {
 		posY: 0
 	};
 
+	private _securityType?: ISecurityType;
+
 	public encodings: number[];
 
-	private _connection: net.Socket|null = null;
+	private _connection: net.Socket | null = null;
 	private _socketBuffer: SocketBuffer;
 
 	static get consts() {
@@ -153,6 +157,9 @@ export class VncClient extends EventEmitter {
 		this._decoders[consts.encodings.copyRect] = new CopyRectDecoder();
 		this._decoders[consts.encodings.hextile] = new HextileDecoder();
 
+		this._securityTypes[consts.security.None] = new NoneSecurityType();
+		this._securityTypes[consts.security.VNC] = new VncSecurityType();
+
 		if (this._timerInterval) {
 			this._fbTimer();
 		}
@@ -205,8 +212,8 @@ export class VncClient extends EventEmitter {
 			port: 5900
 		} */
 	) {
-		if (options.password) {
-			this._password = options.password;
+		if (options.auth) {
+			this._auth = options.auth;
 		}
 
 		this._set8BitColor = options.set8BitColor || false;
@@ -245,10 +252,12 @@ export class VncClient extends EventEmitter {
 		this._connection?.on('data', async (data) => {
 			this._socketBuffer.pushData(data);
 
-			if (!this._handshaked) {
-				this._handleHandshake();
+			if (this._version == '') {
+				this._handleVersion();
+			} else if (this._waitingSecurityTypes) {
+				await this._handleSecurityTypes();
 			} else if (this._expectingChallenge) {
-				this._handleAuthChallenge();
+				await this._handleAuthChallenge();
 			} else if (this._waitingServerInit) {
 				await this._handleServerInit();
 			} else {
@@ -297,7 +306,7 @@ export class VncClient extends EventEmitter {
 	/**
 	 * Handle handshake msg
 	 */
-	private _handleHandshake() {
+	private _handleVersion() {
 		// Handshake, negotiating protocol version
 		if (this._socketBuffer.toString() === consts.versionString.V3_003) {
 			this._log('Sending 3.3', true);
@@ -312,39 +321,78 @@ export class VncClient extends EventEmitter {
 			this._connection?.write(consts.versionString.V3_008);
 			this._version = '3.8';
 		} else {
-			// Negotiating auth mechanism
-			this._handshaked = true;
-			if (this._socketBuffer.includes(0x02) && this._password) {
-				this._log('Password provided and server support VNC auth. Choosing VNC auth.', true);
-				this._expectingChallenge = true;
-				this._connection?.write(Buffer.from([0x02]));
-			} else if (this._socketBuffer.includes(1)) {
-				this._log('Password not provided or server does not support VNC auth. Trying none.', true);
-				this._connection?.write(Buffer.from([0x01]));
-				if (this._version === '3.7') {
-					this._waitingServerInit = true;
-				} else {
-					this._expectingChallenge = true;
-					this._challengeResponseSent = true;
-				}
-			} else {
-				this._log('Connection error. Msg: ' + this._socketBuffer.toString());
-				this.disconnect();
-			}
+			this._log(`Unknown Protocol Version (not an RFB server?)`);
+			this._log(this._socketBuffer.toString(), true);
+			this.disconnect();
+			return;
 		}
 
+		this._waitingSecurityTypes = true;
 		this._socketBuffer?.flush(false);
+	}
+
+	private async _handleSecurityTypes() {
+		this._waitingSecurityTypes = false;
+		let selectedType;
+		// Negotiating auth mechanism
+		if (this._version === '3.7' || this._version === '3.8') {
+			// Read number of security types
+			let securityTypesCount = this._socketBuffer.readUInt8();
+
+			if (securityTypesCount === 0) {
+				await this._socketBuffer.waitBytes(4);
+				let errorLen = this._socketBuffer.readUInt32BE();
+				await this._socketBuffer.waitBytes(errorLen);
+				let error = this._socketBuffer.readNBytesOffset(errorLen).toString('utf8');
+				this._log(`Connection error: ${error}`);
+				this.disconnect();
+				return;
+			}
+
+			await this._socketBuffer.waitBytes(securityTypesCount);
+			let availableSecurityTypes = Array.from(this._socketBuffer.readNBytesOffset(securityTypesCount));
+			this._log(`Server offers security types: ${JSON.stringify(availableSecurityTypes)}`, true);
+
+			selectedType = availableSecurityTypes.find((t) => this._securityTypes[t] != undefined);
+
+			// Send selected type
+			if (selectedType) {
+				this._connection?.write(Buffer.from([selectedType]));
+			}
+		} else {
+			// Server dictates security type
+			selectedType = this._socketBuffer.readUInt32BE();
+		}
+
+		if (!selectedType || !this._securityTypes[selectedType]) {
+			this._log('No supported security types.');
+			this.disconnect();
+			return;
+		}
+
+		this._log(`Security type: ${selectedType}`);
+
+		this._securityType = this._securityTypes[selectedType];
+
+		if (selectedType === consts.security.None && this._version !== '3.8') {
+			this._log('Using no authentication', true);
+			this._authenticated = true;
+			this.emit('authenticated');
+			this._sendClientInit();
+		} else {
+			this._expectingChallenge = true;
+		}
 	}
 
 	/**
 	 * Handle VNC auth challenge
 	 */
-	private _handleAuthChallenge() {
+	private async _handleAuthChallenge() {
 		if (this._challengeResponseSent) {
 			// Challenge response already sent. Checking result.
-
-			if (this._socketBuffer.buffer[3] === 0) {
+			if (this._socketBuffer.readUInt32BE() === 0) {
 				// Auth success
+				this._log('SecurityResult success', true);
 				this._authenticated = true;
 				this.emit('authenticated');
 				this._expectingChallenge = false;
@@ -354,44 +402,21 @@ export class VncClient extends EventEmitter {
 				this.emit('authError');
 				this.resetState();
 			}
+			this._socketBuffer.flush(false);
 		} else {
-			const key = Buffer.alloc(8);
-			key.fill(0);
-			key.write(this._password.slice(0, 8));
+			if (!this._securityType) {
+				throw new Error('Security type was null somehow');
+			}
 
-			this.reverseBits(key);
-
-			const des1 = crypto.createCipheriv('des', key, Buffer.alloc(8));
-			const des2 = crypto.createCipheriv('des', key, Buffer.alloc(8));
-
-			const response = Buffer.alloc(16);
-
-			response.fill(des1.update(this._socketBuffer.buffer.slice(0, 8)), 0, 8);
-			response.fill(des2.update(this._socketBuffer.buffer.slice(8, 16)), 8, 16);
-
-			this._connection?.write(response);
+			this._log(`Authenticating using ${this._securityType.getName()}`);
+			await this._securityType.authenticate(this._version, this._socketBuffer, this._connection!, this._auth);
+			this._log('Authentication finished, waiting for SecurityResult', true);
 			this._challengeResponseSent = true;
-		}
 
-		this._socketBuffer.flush(false);
-	}
-
-	/**
-	 * Reverse bits order of a byte
-	 * @param buf - Buffer to be flipped
-	 */
-	reverseBits(buf: Buffer) {
-		for (let x = 0; x < buf.length; x++) {
-			let newByte = 0;
-			newByte += buf[x] & 128 ? 1 : 0;
-			newByte += buf[x] & 64 ? 2 : 0;
-			newByte += buf[x] & 32 ? 4 : 0;
-			newByte += buf[x] & 16 ? 8 : 0;
-			newByte += buf[x] & 8 ? 16 : 0;
-			newByte += buf[x] & 4 ? 32 : 0;
-			newByte += buf[x] & 2 ? 64 : 0;
-			newByte += buf[x] & 1 ? 128 : 0;
-			buf[x] = newByte;
+			// security result already in buffer
+			if (this._socketBuffer.bytesLeft() > 0) {
+				await this._handleAuthChallenge();
+			}
 		}
 	}
 
@@ -568,8 +593,7 @@ export class VncClient extends EventEmitter {
 			};
 		const { width, height, bitmask, cursorPixels } = this._cursor;
 
-		if(bitmask == null || cursorPixels == null)
-			throw new Error('No cursor data to get!');
+		if (bitmask == null || cursorPixels == null) throw new Error('No cursor data to get!');
 
 		const data = Buffer.alloc(height * width * 4);
 		for (var y = 0; y < height; y++) {
@@ -719,7 +743,7 @@ export class VncClient extends EventEmitter {
 			this._colorMap[firstColor] = {
 				r: Math.floor((this._socketBuffer.readUInt16BE() / 65535) * 255),
 				g: Math.floor((this._socketBuffer.readUInt16BE() / 65535) * 255),
-				b: Math.floor((this._socketBuffer.readUInt16BE() / 65535) * 255),
+				b: Math.floor((this._socketBuffer.readUInt16BE() / 65535) * 255)
 			};
 			firstColor++;
 		}
@@ -767,12 +791,12 @@ export class VncClient extends EventEmitter {
 		this._authenticated = false;
 		this._version = '';
 
-		this._password = '';
+		this._auth = {};
 
 		this._audioChannels = 2;
 		this._audioFrequency = 22050;
 
-		this._handshaked = false;
+		this._waitingSecurityTypes = false;
 
 		this._expectingChallenge = false;
 		this._challengeResponseSent = false;
@@ -815,6 +839,8 @@ export class VncClient extends EventEmitter {
 			posX: 0,
 			posY: 0
 		};
+
+		this._securityType = undefined;
 	}
 
 	/**
