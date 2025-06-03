@@ -1,55 +1,34 @@
-<!--
-*** Thanks for checking out the Best-README-Template. If you have a suggestion
-*** that would make this better, please fork the repo and create a pull request
-*** or simply open an issue with the tag "enhancement".
-*** Thanks again! Now go create something AMAZING! :D
-***
-***
-***
-*** To avoid retyping too much info. Do a search and replace for the following:
-*** github_username, repo_name, twitter_handle, email, project_title, project_description
--->
+# nodejs-rfb
+Pure node.js implementation of RFC 6143 (RFB Protocol / VNC) client with no external dependencies. Supports Raw, CopyRect, Hextile and ZRLE encodings.
 
-<!-- PROJECT LOGO -->
+Fork by Computernewb of Filipe Calaça's original [vnc-rfb-client](https://github.com/ayunami2000/vnc-rfb-client) project mainly for use with the CollabVM project.
 
-<h3 align="center">VNC-RFB-CLIENT</h3>
+## Credits
 
-  <p align="center">
-    Pure node.js implementation of RFC 6143 (RFB Protocol / VNC) client with no external dependencies. Supports Raw, CopyRect, Hextile and ZRLE encodings.
-    <br />
-    <a href="https://github.com/filipecbmoc/vnc-rfb-client/issues">Report Bug or Request Feature</a>
-  </p>
-</p>
-
-<!-- CONTRIBUTIONS -->
-## User Contributions
+### Filipe Calaça 
+- Original library
 ### ayunami2000
-- qemu audio (PCM)
-- qemu relative pointer
-- documentation for these WIP
+- QEMU Audio (PCM)
+- QEMU Relative Pointer
+### dithercat
+- Pseudo-cursor support
+- General codebase improvements
+### Modeco80
+- Ported to TypeScript
+- Large amounts of refactoring and improvements
+### ElijahR2411
+- Security/Authentication refactor
 
-
-<!-- GETTING STARTED -->
-
-## Getting Started
-
-### Requirements
-
-Node.js >= 10
-
-### Installation
-
-1. Install NPM packages
-   ```sh
-   npm install vnc-rfb-client
-   ```
-
-<!-- USAGE EXAMPLES -->
+## Installation
+```sh
+yarn add nodejs-rfb # Yarn
+npm install nodejs-rfb # NPM
+```
 
 ## Usage
 
-```javascript
-const VncClient = require('vnc-rfb-client');
+```ts
+import { VncClient } from 'nodejs-rfb';
 
 const initOptions = {
     debug: false, // Set debug logging
@@ -61,11 +40,15 @@ const initOptions = {
         VncClient.consts.encodings.pseudoDesktopSize,
     ]
 };
+
 const client = new VncClient(initOptions);
 
 const connectionOptions = {
     host: '', // VNC Server
-    password: '', // Password
+    path: null, // UNIX domain socket
+    auth: {
+      password: '' // Password
+    },
     set8BitColor: false, // If set to true, client will request 8 bit color, only supported with Raw encoding
     port: 5900 // Remote server port
 }
@@ -134,14 +117,14 @@ client.on('rectProcessed', (rect) => {
 ### Save frame to jpg
 
 ```javascript
-const VncClient = require('vnc-rfb-client');
-const Jimp = require('jimp');
+import { VncClient } from 'nodejs-rfb';
+import { Jimp } from 'jimp';
 
 const client = new VncClient();
 
 // Just 1 update per second
 client.changeFps(1);
-client.connect({host: '127.0.0.1', port: 5900, password: 'abc123'});
+client.connect({host: '127.0.0.1', port: 5900, path: null, password: 'abc123'});
 
 client.on('frameUpdated', (data) => {
    new Jimp({width: client.clientWidth, height: client.clientHeight, data}, (err, image) => {
@@ -166,15 +149,15 @@ client.on('authError', () => {
 ### Record session with FFMPEG
 
 ```javascript
-const VncClient = require('vnc-rfb-client');
-const spawn = require('child_process').spawn;
+import { VncClient } from 'nodejs-rfb';
+import { spawn } from 'child_process';
 const fps = 10;
 
 let timerRef;
 const client = new VncClient({fps});
 let out;
 
-client.connect({host: '127.0.0.1', port: 5900, password: 'abc123'});
+client.connect({host: '127.0.0.1', port: 5900, path: null, password: 'abc123'});
 
 client.on('firstFrameUpdate', () => {
    console.log('Start recording...');
@@ -233,7 +216,10 @@ client.changeFps(10);
  */
 const connectionOptions = {
     host: '', // VNC Server
-    password: '', // Password
+    path: null, // UNIX domain socket
+    auth: {
+      password: '' // Password
+    }
     set8BitColor: false, // If set to true, client will request 8 bit color, only supported with Raw encoding
     port: 5900 // Remote server port
 }
@@ -263,67 +249,6 @@ client.clientCutText(text);
 client.resetState(); // Reset the state of the client, clear the frame buffer and purge all data
 ```
 
-<!-- ROADMAP -->
-
-## Roadmap
-
-### Done
-
-#### Encodings Supported
-
-Raw <br>
-CopyRect <br>
-Hextile <br>
-ZRLE <br>
-PseudoDesktopSize <br>
-3.7 and 3.8 protocol implementations
-
-### TODO:
-
-Tight Encoding <br>
-Pseudo Cursor Encoding <br>
-Save session data to file <br>
-Replay session from rect data saved to file
-
 ## License
 
 Distributed under the MIT License. See `LICENSE` for more information.
-
-
-
-<!-- CONTACT -->
-
-## Contact
-
-Filipe Calaça - filipe@habilis.eng.br
-
-Project Link: [https://github.com/filipecbmoc/vnc-rfb-client](https://github.com/filipecbmoc/vnc-rfb-client)
-
-
-
-<!-- MARKDOWN LINKS & IMAGES -->
-<!-- https://www.markdownguide.org/basic-syntax/#reference-style-links -->
-
-[contributors-shield]: https://img.shields.io/github/contributors/github_username/repo.svg?style=for-the-badge
-
-[contributors-url]: https://github.com/filipecbmoc/vnc-rfb-client/graphs/contributors
-
-[forks-shield]: https://img.shields.io/github/forks/github_username/repo.svg?style=for-the-badge
-
-[forks-url]: https://github.com/filipecbmoc/vnc-rfb-client/network/members
-
-[stars-shield]: https://img.shields.io/github/stars/github_username/repo.svg?style=for-the-badge
-
-[stars-url]: https://github.com/filipecbmoc/vnc-rfb-client/stargazers
-
-[issues-shield]: https://img.shields.io/github/issues/github_username/repo.svg?style=for-the-badge
-
-[issues-url]: https://github.com/filipecbmoc/vnc-rfb-client/issues
-
-[license-shield]: https://img.shields.io/github/license/github_username/repo.svg?style=for-the-badge
-
-[license-url]: https://github.com/filipe/vnc-rfb-client/blob/master/LICENSE.txt
-
-[linkedin-shield]: https://img.shields.io/badge/-LinkedIn-black.svg?style=for-the-badge&logo=linkedin&colorB=555
-
-[linkedin-url]: https://linkedin.com/in/filipecalaca
