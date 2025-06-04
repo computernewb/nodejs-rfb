@@ -25,7 +25,8 @@
     }
   },
   "dependencies": {
-    "des.js": "^1.1.0"
+    "des.js": "^1.1.0",
+    "js-md4": "^0.3.2"
   },
   "devDependencies": {
     "@parcel/packager-ts": "^2.15.2",

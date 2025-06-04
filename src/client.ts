@@ -17,7 +17,7 @@ import { RectangleWithData, Color3, PixelFormat, Cursor } from './types.js';
 import { ISecurityType } from './security/securitytype.js';
 import { NoneSecurityType } from './security/none.js';
 import { VncSecurityType } from './security/vnc.js';
-
+import { NtlmAuthInfo, NtlmSecurityType } from './security/ntlm.js';
 export class VncClient extends EventEmitter {
 	// These are in no particular order.
 
@@ -45,7 +45,7 @@ export class VncClient extends EventEmitter {
 	private _waitingSecurityTypes: boolean = false;
 	private _waitingServerInit: boolean = false;
 	private _expectingChallenge: boolean = false;
-	private _challengeResponseSent: boolean = false;
+	private _waitingSecurityResult: boolean = false;
 
 	private _set8BitColor: boolean = false;
 	private _frameBufferReady = false;
@@ -53,8 +53,6 @@ export class VncClient extends EventEmitter {
 	private _processingFrame = false;
 
 	private _relativePointer: boolean = false;
-
-	public bigEndianFlag: boolean = false;
 
 	public clientWidth: number = 0;
 	public clientHeight: number = 0;
@@ -131,7 +129,7 @@ export class VncClient extends EventEmitter {
 	constructor(options: any = { debug: false, fps: 0, encodings: [] }) {
 		super();
 
-		this._socketBuffer = new SocketBuffer();
+		this._socketBuffer = new SocketBuffer(options.debug);
 
 		this.resetState();
 		this.debug = options.debug || false;
@@ -159,6 +157,7 @@ export class VncClient extends EventEmitter {
 
 		this._securityTypes[consts.security.None] = new NoneSecurityType();
 		this._securityTypes[consts.security.VNC] = new VncSecurityType();
+		this._securityTypes[consts.security.NTLM] = new NtlmSecurityType();
 
 		if (this._timerInterval) {
 			this._fbTimer();
@@ -234,6 +233,7 @@ export class VncClient extends EventEmitter {
 		this._connection?.on('connect', () => {
 			this._connected = true;
 			this.emit('connected');
+			this._readWorker();
 		});
 
 		this._connection?.on('close', () => {
@@ -251,19 +251,27 @@ export class VncClient extends EventEmitter {
 
 		this._connection?.on('data', async (data) => {
 			this._socketBuffer.pushData(data);
+		});
+	}
 
+	private async _readWorker() {
+		while (this._connection?.readable) {
 			if (this._version == '') {
-				this._handleVersion();
+				await this._handleVersion();
 			} else if (this._waitingSecurityTypes) {
 				await this._handleSecurityTypes();
 			} else if (this._expectingChallenge) {
 				await this._handleAuthChallenge();
+			} else if (this._waitingSecurityResult) {
+				await this._handleSecurityResult();
 			} else if (this._waitingServerInit) {
 				await this._handleServerInit();
 			} else {
 				await this._handleData();
 			}
-		});
+
+			this._socketBuffer.flush(true);
+		}
 	}
 
 	/**
@@ -306,29 +314,33 @@ export class VncClient extends EventEmitter {
 	/**
 	 * Handle handshake msg
 	 */
-	private _handleVersion() {
+	private async _handleVersion() {
+		let ver = (await this._socketBuffer.readNBytesOffset(12)).toString('ascii');
 		// Handshake, negotiating protocol version
-		if (this._socketBuffer.toString() === consts.versionString.V3_003) {
+		if (ver === consts.versionString.V3_003) {
 			this._log('Sending 3.3', true);
 			this._connection?.write(consts.versionString.V3_003);
 			this._version = '3.3';
-		} else if (this._socketBuffer.toString() === consts.versionString.V3_007) {
+		} else if (ver === consts.versionString.V3_006) {
+			this._log('Sending 3.6 (VMRC)', true);
+			this._connection?.write(consts.versionString.V3_006);
+			this._version = '3.6';
+		} else if (ver === consts.versionString.V3_007) {
 			this._log('Sending 3.7', true);
 			this._connection?.write(consts.versionString.V3_007);
 			this._version = '3.7';
-		} else if (this._socketBuffer.toString() === consts.versionString.V3_008) {
+		} else if (ver === consts.versionString.V3_008) {
 			this._log('Sending 3.8', true);
 			this._connection?.write(consts.versionString.V3_008);
 			this._version = '3.8';
 		} else {
-			this._log(`Unknown Protocol Version (not an RFB server?)`);
-			this._log(this._socketBuffer.toString(), true);
+			this._log(`Unknown Protocol Version (not an RFB server?)`, true);
+			this._log(ver, true);
 			this.disconnect();
 			return;
 		}
 
 		this._waitingSecurityTypes = true;
-		this._socketBuffer?.flush(false);
 	}
 
 	private async _handleSecurityTypes() {
@@ -337,20 +349,17 @@ export class VncClient extends EventEmitter {
 		// Negotiating auth mechanism
 		if (this._version === '3.7' || this._version === '3.8') {
 			// Read number of security types
-			let securityTypesCount = this._socketBuffer.readUInt8();
+			let securityTypesCount = await this._socketBuffer.readUInt8();
 
 			if (securityTypesCount === 0) {
-				await this._socketBuffer.waitBytes(4);
-				let errorLen = this._socketBuffer.readUInt32BE();
-				await this._socketBuffer.waitBytes(errorLen);
-				let error = this._socketBuffer.readNBytesOffset(errorLen).toString('utf8');
-				this._log(`Connection error: ${error}`);
+				let errorLen = await this._socketBuffer.readUInt32BE();
+				let error = (await this._socketBuffer.readNBytesOffset(errorLen)).toString('utf8');
+				this._log(`Connection error: ${error}`, true);
 				this.disconnect();
 				return;
 			}
 
-			await this._socketBuffer.waitBytes(securityTypesCount);
-			let availableSecurityTypes = Array.from(this._socketBuffer.readNBytesOffset(securityTypesCount));
+			let availableSecurityTypes = Array.from(await this._socketBuffer.readNBytesOffset(securityTypesCount));
 			this._log(`Server offers security types: ${JSON.stringify(availableSecurityTypes)}`, true);
 
 			selectedType = availableSecurityTypes.find((t) => this._securityTypes[t] != undefined);
@@ -361,16 +370,16 @@ export class VncClient extends EventEmitter {
 			}
 		} else {
 			// Server dictates security type
-			selectedType = this._socketBuffer.readUInt32BE();
+			selectedType = await this._socketBuffer.readUInt32BE();
 		}
 
 		if (!selectedType || !this._securityTypes[selectedType]) {
-			this._log('No supported security types.');
+			this._log('No supported security types.', true);
 			this.disconnect();
 			return;
 		}
 
-		this._log(`Security type: ${selectedType}`);
+		this._log(`Security type: ${selectedType}`, true);
 
 		this._securityType = this._securityTypes[selectedType];
 
@@ -388,35 +397,29 @@ export class VncClient extends EventEmitter {
 	 * Handle VNC auth challenge
 	 */
 	private async _handleAuthChallenge() {
-		if (this._challengeResponseSent) {
-			// Challenge response already sent. Checking result.
-			if (this._socketBuffer.readUInt32BE() === 0) {
-				// Auth success
-				this._log('SecurityResult success', true);
-				this._authenticated = true;
-				this.emit('authenticated');
-				this._expectingChallenge = false;
-				this._sendClientInit();
-			} else {
-				// Auth fail
-				this.emit('authError');
-				this.resetState();
-			}
-			this._socketBuffer.flush(false);
+		if (!this._securityType) {
+			throw new Error('Security type was null somehow');
+		}
+
+		this._log(`Authenticating using ${this._securityType.getName()}`, true);
+		await this._securityType.authenticate(this._version, this._socketBuffer, this._connection!, this._auth);
+		this._log('Authentication finished, waiting for SecurityResult', true);
+		this._expectingChallenge = false;
+		this._waitingSecurityResult = true;
+	}
+
+	private async _handleSecurityResult() {
+		if ((await this._socketBuffer.readUInt32BE()) === 0) {
+			// Auth success
+			this._log('SecurityResult success', true);
+			this._authenticated = true;
+			this._waitingSecurityResult = false;
+			this.emit('authenticated');
+			this._sendClientInit();
 		} else {
-			if (!this._securityType) {
-				throw new Error('Security type was null somehow');
-			}
-
-			this._log(`Authenticating using ${this._securityType.getName()}`);
-			await this._securityType.authenticate(this._version, this._socketBuffer, this._connection!, this._auth);
-			this._log('Authentication finished, waiting for SecurityResult', true);
-			this._challengeResponseSent = true;
-
-			// security result already in buffer
-			if (this._socketBuffer.bytesLeft() > 0) {
-				await this._handleAuthChallenge();
-			}
+			// Auth fail
+			this.emit('authError');
+			this.resetState();
 		}
 	}
 
@@ -426,25 +429,19 @@ export class VncClient extends EventEmitter {
 	private async _handleServerInit() {
 		this._waitingServerInit = false;
 
-		await this._socketBuffer.waitBytes(18);
+		this.clientWidth = await this._socketBuffer.readUInt16BE();
+		this.clientHeight = await this._socketBuffer.readUInt16BE();
 
-		this.clientWidth = this._socketBuffer.readUInt16BE();
-		this.clientHeight = this._socketBuffer.readUInt16BE();
+		this._log(`Resolution: ${this.clientWidth}x${this.clientHeight}`, true);
 
-		this.pixelFormat.bitsPerPixel = this._socketBuffer.readUInt8();
-		this.pixelFormat.depth = this._socketBuffer.readUInt8();
-		this.pixelFormat.bigEndianFlag = this._socketBuffer.readUInt8();
-		this.pixelFormat.trueColorFlag = this._socketBuffer.readUInt8();
-		this.pixelFormat.redMax = this.bigEndianFlag ? this._socketBuffer.readUInt16BE() : this._socketBuffer.readUInt16LE();
-		this.pixelFormat.greenMax = this.bigEndianFlag ? this._socketBuffer.readUInt16BE() : this._socketBuffer.readUInt16LE();
-		this.pixelFormat.blueMax = this.bigEndianFlag ? this._socketBuffer.readUInt16BE() : this._socketBuffer.readUInt16LE();
-		this.pixelFormat.redShift = this._socketBuffer.readInt8();
-		this.pixelFormat.greenShift = this._socketBuffer.readInt8();
-		this.pixelFormat.blueShift = this._socketBuffer.readInt8();
+		let pixelFormat = await this._socketBuffer.readNBytesOffset(16);
+		this.readPixelFormat(pixelFormat);
 		this.updateFbSize();
-		this.clientName = this._socketBuffer.buffer.slice(24).toString();
 
-		this._socketBuffer.flush(false);
+		this._log(`Pixel format: ${JSON.stringify(this.pixelFormat)}`, true);
+		let clientNameLen = await this._socketBuffer.readUInt32BE();
+		this.clientName = (await this._socketBuffer.readNBytesOffset(clientNameLen)).toString();
+		this._log(`Client name: ${this.clientName}`, true);
 
 		// FIXME: Removed because these are noise
 		//this._log(`Screen size: ${this.clientWidth}x${this.clientHeight}`);
@@ -455,52 +452,93 @@ export class VncClient extends EventEmitter {
 			//this._log(`8 bit color format requested, only raw encoding is supported.`);
 			this._setPixelFormatToColorMap();
 		}
+		if (this._version === '3.6') {
+			this._connection?.write(Buffer.from([0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x2a]));
+			let vm = (this._auth as NtlmAuthInfo).vm ?? '';
 
-		this._sendEncodings();
-
-		setTimeout(() => {
+			let buf = Buffer.alloc(12 + vm.length);
+			buf[0] = 0x07;
+			buf[1] = 0x02;
+			buf[7] = 0x02;
+			buf.writeUint32BE(vm.length, 8);
+			buf.write(vm, 12, 'utf8');
+			this._connection?.write(buf);
+			this.setPixelFormat({
+				bitsPerPixel: 32,
+				depth: 24,
+				bigEndianFlag: 0,
+				trueColorFlag: 1,
+				redMax: 255,
+				greenMax: 255,
+				blueMax: 255,
+				redShift: 0,
+				greenShift: 8,
+				blueShift: 16
+			});
 			this.requestFrameUpdate(true);
-		}, 1000);
+		} else {
+			this._sendEncodings();
+			setTimeout(() => {
+				this.requestFrameUpdate(true);
+			}, 1000);
+		}
+	}
+
+	private readPixelFormat(pixelFormat: Buffer) {
+		this.pixelFormat.bitsPerPixel = pixelFormat.readUInt8(0);
+		this.pixelFormat.depth = pixelFormat.readUInt8(1);
+		this.pixelFormat.bigEndianFlag = pixelFormat.readUInt8(2);
+		this.pixelFormat.trueColorFlag = pixelFormat.readUInt8(3);
+		this.pixelFormat.redMax = this.pixelFormat.bigEndianFlag ? pixelFormat.readUInt16BE(4) : pixelFormat.readUInt16LE(4);
+		this.pixelFormat.greenMax = this.pixelFormat.bigEndianFlag ? pixelFormat.readUInt16BE(6) : pixelFormat.readUInt16LE(6);
+		this.pixelFormat.blueMax = this.pixelFormat.bigEndianFlag ? pixelFormat.readUInt16BE(8) : pixelFormat.readUInt16LE(8);
+		this.pixelFormat.redShift = pixelFormat.readInt8(10);
+		this.pixelFormat.greenShift = pixelFormat.readInt8(11);
+		this.pixelFormat.blueShift = pixelFormat.readInt8(12);
 	}
 
 	/**
 	 * Update the frame buffer size according to client width and height (RGBA)
 	 */
 	updateFbSize() {
-		this.fb = Buffer.alloc(this.clientWidth * this.clientHeight * 4);
+		this.fb = Buffer.alloc(this.clientWidth * this.clientHeight * (this.pixelFormat.bitsPerPixel / 8));
+	}
+
+	setPixelFormat(format: PixelFormat) {
+		const message = Buffer.alloc(20);
+
+		message.writeUint8(format.bitsPerPixel, 4);
+		message.writeUint8(format.depth, 5);
+		message.writeUint8(format.bigEndianFlag, 6);
+		message.writeUint8(format.trueColorFlag, 7);
+		message.writeUint16BE(format.redMax, 8);
+		message.writeUint16BE(format.greenMax, 10);
+		message.writeUint16BE(format.blueMax, 12);
+		message.writeUint8(format.redShift, 14);
+		message.writeUint8(format.greenShift, 15);
+		message.writeUint8(format.blueShift, 16);
+
+		this._connection?.write(message);
+		this.pixelFormat = format;
 	}
 
 	/**
 	 * Request the server to change to 8bit color format (Color palette). Only works with Raw encoding.
 	 */
 	private _setPixelFormatToColorMap() {
-		this._log(`Requesting PixelFormat change to ColorMap (8 bits).`);
-
-		const message = Buffer.alloc(20);
-		message.writeUInt8(0); // Tipo da mensagem
-		message.writeUInt8(0, 1); // Padding
-		message.writeUInt8(0, 2); // Padding
-		message.writeUInt8(0, 3); // Padding
-
-		message.writeUInt8(8, 4); // PixelFormat - BitsPerPixel
-		message.writeUInt8(8, 5); // PixelFormat - Depth
-		message.writeUInt8(0, 6); // PixelFormat - BigEndianFlag
-		message.writeUInt8(0, 7); // PixelFormat - TrueColorFlag
-		message.writeUInt16BE(255, 8); // PixelFormat - RedMax
-		message.writeUInt16BE(255, 10); // PixelFormat - GreenMax
-		message.writeUInt16BE(255, 12); // PixelFormat - BlueMax
-		message.writeUInt8(0, 14); // PixelFormat - RedShift
-		message.writeUInt8(8, 15); // PixelFormat - GreenShift
-		message.writeUInt8(16, 16); // PixelFormat - BlueShift
-		message.writeUInt8(0, 17); // PixelFormat - Padding
-		message.writeUInt8(0, 18); // PixelFormat - Padding
-		message.writeUInt8(0, 19); // PixelFormat - Padding
-
-		// Envia um setPixelFormat trocando para mapa de cores
-		this._connection?.write(message);
-
-		this.pixelFormat.bitsPerPixel = 8;
-		this.pixelFormat.depth = 8;
+		this._log(`Requesting PixelFormat change to ColorMap (8 bits).`, true);
+		this.setPixelFormat({
+			bitsPerPixel: 8,
+			depth: 8,
+			bigEndianFlag: 0,
+			trueColorFlag: 0,
+			redMax: 255,
+			greenMax: 255,
+			blueMax: 255,
+			redShift: 0,
+			greenShift: 8,
+			blueShift: 16
+		});
 	}
 
 	/**
@@ -543,28 +581,71 @@ export class VncClient extends EventEmitter {
 	 * Handle data msg
 	 */
 	private async _handleData() {
-		if (!this._rects) {
-			switch (this._socketBuffer.buffer[0]) {
-				case consts.serverMsgTypes.fbUpdate:
-					await this._handleFbUpdate();
-					break;
+		let msg = await this._socketBuffer.readUInt8(true);
+		switch (msg) {
+			case consts.serverMsgTypes.fbUpdate:
+				await this._handleFbUpdate();
+				return;
 
-				case consts.serverMsgTypes.setColorMap:
-					await this._handleSetColorMap();
-					break;
+			case consts.serverMsgTypes.setColorMap:
+				await this._handleSetColorMap();
+				return;
 
-				case consts.serverMsgTypes.bell:
-					this.emit('bell');
-					this._socketBuffer.flush();
-					break;
+			case consts.serverMsgTypes.bell:
+				this.emit('bell');
+				await this._socketBuffer.readUInt8();
+				return;
 
-				case consts.serverMsgTypes.cutText:
-					await this._handleCutText();
-					break;
+			case consts.serverMsgTypes.cutText:
+				await this._handleCutText();
+				return;
 
-				case consts.serverMsgTypes.qemuAudio:
-					await this._handleQemuAudio();
+			case consts.serverMsgTypes.qemuAudio:
+				await this._handleQemuAudio();
+				return;
+		}
+		if (this._version === '3.6') {
+			switch (msg) {
+				case 0x04: {
+					// Read display update
+					let displayUpdate = await this._socketBuffer.readNBytesOffset(28);
+
+					let nameWidth = displayUpdate.readUint32BE(24);
+					this.clientName = (await this._socketBuffer.readNBytesOffset(nameWidth)).toString('utf-8');
+					this._log(`VMRC Client Name: ${this.clientName}`, true);
+
+					this.clientWidth = displayUpdate.readUInt16BE(4);
+					this.clientHeight = displayUpdate.readUInt16BE(6);
+					this._log(`VM resolution: ${this.clientWidth}x${this.clientHeight}`, true);
+
+					this.readPixelFormat(displayUpdate.subarray(8, 24));
+
+					this.updateFbSize();
+					this.emit('desktopSizeChanged', { width: this.clientWidth, height: this.clientHeight });
+
+					this._sendEncodings();
+
+					this.setPixelFormat({
+						bitsPerPixel: 32,
+						depth: 24,
+						bigEndianFlag: 0,
+						trueColorFlag: 1,
+						redMax: 255,
+						greenMax: 255,
+						blueMax: 255,
+						redShift: 0,
+						greenShift: 8,
+						blueShift: 16
+					});
+					this.requestFrameUpdate(true);
 					break;
+				}
+				default: {
+					// hopefully doesnt cause problems tm
+					this._log(`Unknown VMRC command ${msg}`, true);
+					this._socketBuffer.flush(false);
+					break;
+				}
 			}
 		}
 	}
@@ -573,12 +654,9 @@ export class VncClient extends EventEmitter {
 	 * Cut message (text was copied to clipboard on server)
 	 */
 	private async _handleCutText(): Promise<void> {
-		this._socketBuffer.setOffset(4);
-		await this._socketBuffer.waitBytes(1);
-		const length = this._socketBuffer.readUInt32BE();
-		await this._socketBuffer.waitBytes(length);
-		this.emit('cutText', this._socketBuffer.readNBytesOffset(length).toString());
-		this._socketBuffer.flush();
+		await this._socketBuffer.readNBytesOffset(4);
+		const length = await this._socketBuffer.readUInt32BE();
+		this.emit('cutText', (await this._socketBuffer.readNBytesOffset(length)).toString());
 	}
 
 	/**
@@ -603,7 +681,6 @@ export class VncClient extends EventEmitter {
 				if (active) {
 					switch (this.pixelFormat.bitsPerPixel) {
 						case 8:
-							console.log(8);
 							const index = cursorPixels.readUInt8(offset);
 							// @ts-ignore (This line is extremely suspect anyways. I bet this is horribly broken!!)
 							const color = this._colorMap[index] | 0xff;
@@ -643,13 +720,12 @@ export class VncClient extends EventEmitter {
 		const sendFbUpdate = this._rects;
 
 		while (this._rects) {
-			await this._socketBuffer.waitBytes(12);
 			const rect: RectangleWithData = {
-				x: this._socketBuffer.readUInt16BE(),
-				y: this._socketBuffer.readUInt16BE(),
-				width: this._socketBuffer.readUInt16BE(),
-				height: this._socketBuffer.readUInt16BE(),
-				encoding: this._socketBuffer.readInt32BE(),
+				x: await this._socketBuffer.readUInt16BE(),
+				y: await this._socketBuffer.readUInt16BE(),
+				width: await this._socketBuffer.readUInt16BE(),
+				height: await this._socketBuffer.readUInt16BE(),
+				encoding: await this._socketBuffer.readInt32BE(),
 				data: null // for now
 			};
 
@@ -665,8 +741,8 @@ export class VncClient extends EventEmitter {
 				this._cursor.height = rect.height;
 				this._cursor.x = rect.x;
 				this._cursor.y = rect.y;
-				this._cursor.cursorPixels = this._socketBuffer.readNBytesOffset(dataSize);
-				this._cursor.bitmask = this._socketBuffer.readNBytesOffset(bitmaskSize);
+				this._cursor.cursorPixels = await this._socketBuffer.readNBytesOffset(dataSize);
+				this._cursor.bitmask = await this._socketBuffer.readNBytesOffset(bitmaskSize);
 				rect.data = Buffer.concat([this._cursor.cursorPixels, this._cursor.bitmask]);
 				this.emit('cursorChanged', this._getPseudoCursor());
 			} else if (rect.encoding === consts.encodings.pseudoDesktopSize) {
@@ -697,10 +773,6 @@ export class VncClient extends EventEmitter {
 			}
 			this._rects--;
 			this.emit('rectProcessed', rect);
-
-			if (!this._rects) {
-				this._socketBuffer.flush(true);
-			}
 		}
 
 		if (sendFbUpdate) {
@@ -721,8 +793,8 @@ export class VncClient extends EventEmitter {
 	}
 
 	private async _handleFbUpdate() {
-		this._socketBuffer.setOffset(2);
-		this._rects = this._socketBuffer.readUInt16BE();
+		await this._socketBuffer.readNBytesOffset(2);
+		this._rects = await this._socketBuffer.readUInt16BE();
 		this._log('Frame update received. Rects: ' + this._rects, true);
 		await this._handleRect();
 	}
@@ -731,44 +803,38 @@ export class VncClient extends EventEmitter {
 	 * Handle setColorMap msg
 	 */
 	private async _handleSetColorMap(): Promise<void> {
-		this._socketBuffer.setOffset(2);
-		let firstColor = this._socketBuffer.readUInt16BE();
-		const numColors = this._socketBuffer.readUInt16BE();
+		await this._socketBuffer.readNBytesOffset(2);
+		let firstColor = await this._socketBuffer.readUInt16BE();
+		const numColors = await this._socketBuffer.readUInt16BE();
 
-		this._log(`ColorMap received. Colors: ${numColors}.`);
-
-		await this._socketBuffer.waitBytes(numColors * 6);
+		this._log(`ColorMap received. Colors: ${numColors}.`, true);
 
 		for (let x = 0; x < numColors; x++) {
 			this._colorMap[firstColor] = {
-				r: Math.floor((this._socketBuffer.readUInt16BE() / 65535) * 255),
-				g: Math.floor((this._socketBuffer.readUInt16BE() / 65535) * 255),
-				b: Math.floor((this._socketBuffer.readUInt16BE() / 65535) * 255)
+				r: Math.floor(((await this._socketBuffer.readUInt16BE()) / 65535) * 255),
+				g: Math.floor(((await this._socketBuffer.readUInt16BE()) / 65535) * 255),
+				b: Math.floor(((await this._socketBuffer.readUInt16BE()) / 65535) * 255)
 			};
 			firstColor++;
 		}
 
 		this.emit('colorMapUpdated', this._colorMap);
-		this._socketBuffer.flush();
 	}
 
 	async _handleQemuAudio() {
-		this._socketBuffer.setOffset(2);
-		let operation = this._socketBuffer.readUInt16BE();
+		await this._socketBuffer.readNBytesOffset(2);
+		let operation = await this._socketBuffer.readUInt16BE();
 		if (operation == 2) {
-			const length = this._socketBuffer.readUInt32BE();
+			const length = await this._socketBuffer.readUInt32BE();
 
-			//this._log(`Audio received. Length: ${length}.`);
+			//this._log(`Audio received. Length: ${length}.`)
 
-			await this._socketBuffer.waitBytes(length);
-
-			let audioBuffer = this._socketBuffer.readNBytes(length);
+			let audioBuffer = await this._socketBuffer.readNBytesOffset(length);
 
 			this._audioData = audioBuffer;
 		}
 
 		this.emit('audioStream', this._audioData);
-		this._socketBuffer.flush();
 	}
 
 	/**
@@ -799,7 +865,7 @@ export class VncClient extends EventEmitter {
 		this._waitingSecurityTypes = false;
 
 		this._expectingChallenge = false;
-		this._challengeResponseSent = false;
+		this._waitingSecurityResult = false;
 
 		this._frameBufferReady = false;
 		this._firstFrameReceived = false;

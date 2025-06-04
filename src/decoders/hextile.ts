@@ -1,14 +1,12 @@
-import { SocketBuffer } from "../socketbuffer";
-import { IRectDecoder } from "./decoder";
-import { applyColor, getPixelBytePos } from "./util";
+import { SocketBuffer } from '../socketbuffer';
+import { IRectDecoder } from './decoder';
+import { applyColor, getPixelBytePos } from './util';
 
-import { RectangleWithData, Color3 } from "../types";
+import { RectangleWithData, Color3 } from '../types';
 
 export class HextileDecoder implements IRectDecoder {
-
 	async decode(rect: RectangleWithData, fb: Buffer, bitsPerPixel: number, colorMap: Array<Color3>, screenW: number, screenH: number, socket: SocketBuffer, depth: number): Promise<void> {
 		return new Promise(async (resolve, reject) => {
-			const initialOffset = socket.offset;
 			let dataSize = 0;
 
 			let lastSubEncoding = 0;
@@ -22,9 +20,7 @@ export class HextileDecoder implements IRectDecoder {
 			let totalTiles = tiles;
 
 			while (tiles) {
-				await socket.waitBytes(1);
-				const subEncoding = socket.readUInt8();
-				dataSize++;
+				const subEncoding = await socket.readUInt8();
 				const currTile = totalTiles - tiles;
 
 				// Calculate tile position and size
@@ -44,13 +40,12 @@ export class HextileDecoder implements IRectDecoder {
 					}
 				} else if (subEncoding & 0x01) {
 					// If Raw, ignore all other bits
-					await socket.waitBytes(th * tw * (bitsPerPixel / 8));
 					dataSize += th * tw * (bitsPerPixel / 8);
 					for (let h = 0; h < th; h++) {
 						for (let w = 0; w < tw; w++) {
 							const fbBytePosOffset = getPixelBytePos(tx + w, ty + h, screenW, screenH);
 							if (bitsPerPixel === 8) {
-								const index = socket.readUInt8();
+								const index = await socket.readUInt8();
 								const color = colorMap[index];
 								// RGB
 								// fb.writeUInt8(color?.r || 255, fbBytePosOffset);
@@ -62,9 +57,9 @@ export class HextileDecoder implements IRectDecoder {
 								fb.writeUInt8(color?.g || 255, fbBytePosOffset + 1);
 								fb.writeUInt8(color?.b || 255, fbBytePosOffset);
 							} else if (bitsPerPixel === 24) {
-								fb.writeUInt8(socket.readUInt8(), fbBytePosOffset);
-								fb.writeUInt8(socket.readUInt8(), fbBytePosOffset + 1);
-								fb.writeUInt8(socket.readUInt8(), fbBytePosOffset + 2);
+								fb.writeUInt8(await socket.readUInt8(), fbBytePosOffset);
+								fb.writeUInt8(await socket.readUInt8(), fbBytePosOffset + 1);
+								fb.writeUInt8(await socket.readUInt8(), fbBytePosOffset + 2);
 							} else if (bitsPerPixel === 32) {
 								// RGB
 								// fb.writeUInt8(rect.data.readUInt8(bytePosOffset), fbBytePosOffset);
@@ -72,9 +67,9 @@ export class HextileDecoder implements IRectDecoder {
 								// fb.writeUInt8(rect.data.readUInt8(bytePosOffset + 2), fbBytePosOffset + 2);
 
 								// BGR
-								fb.writeUInt8(socket.readUInt8(), fbBytePosOffset + 2);
-								fb.writeUInt8(socket.readUInt8(), fbBytePosOffset + 1);
-								fb.writeUInt8(socket.readUInt8(), fbBytePosOffset);
+								fb.writeUInt8(await socket.readUInt8(), fbBytePosOffset + 2);
+								fb.writeUInt8(await socket.readUInt8(), fbBytePosOffset + 1);
+								fb.writeUInt8(await socket.readUInt8(), fbBytePosOffset);
 								socket.readUInt8();
 							}
 							// Alpha, always 255
@@ -87,8 +82,7 @@ export class HextileDecoder implements IRectDecoder {
 					if (subEncoding & 0x02) {
 						switch (bitsPerPixel) {
 							case 8:
-								await socket.waitBytes(1);
-								const index = socket.readUInt8();
+								const index = await socket.readUInt8();
 								dataSize++;
 								backgroundColor.r = colorMap[index].r || 255;
 								backgroundColor.g = colorMap[index].g || 255;
@@ -96,20 +90,18 @@ export class HextileDecoder implements IRectDecoder {
 								break;
 
 							case 24:
-								await socket.waitBytes(3);
 								dataSize += 3;
-								backgroundColor.r = socket.readUInt8();
-								backgroundColor.g = socket.readUInt8();
-								backgroundColor.b = socket.readUInt8();
+								backgroundColor.r = await socket.readUInt8();
+								backgroundColor.g = await socket.readUInt8();
+								backgroundColor.b = await socket.readUInt8();
 								break;
 
 							case 32:
-								await socket.waitBytes(4);
 								dataSize += 4;
-								backgroundColor.r = socket.readUInt8();
-								backgroundColor.g = socket.readUInt8();
-								backgroundColor.b = socket.readUInt8();
-								backgroundColor.a = socket.readUInt8();
+								backgroundColor.r = await socket.readUInt8();
+								backgroundColor.g = await socket.readUInt8();
+								backgroundColor.b = await socket.readUInt8();
+								backgroundColor.a = await socket.readUInt8();
 								break;
 						}
 					}
@@ -118,8 +110,7 @@ export class HextileDecoder implements IRectDecoder {
 					if (subEncoding & 0x04) {
 						switch (bitsPerPixel) {
 							case 8:
-								await socket.waitBytes(1);
-								const index = socket.readUInt8();
+								const index = await socket.readUInt8();
 								dataSize++;
 								foregroundColor.r = colorMap[index].r || 255;
 								foregroundColor.g = colorMap[index].g || 255;
@@ -127,20 +118,18 @@ export class HextileDecoder implements IRectDecoder {
 								break;
 
 							case 24:
-								await socket.waitBytes(3);
 								dataSize += 3;
-								foregroundColor.r = socket.readUInt8();
-								foregroundColor.g = socket.readUInt8();
-								foregroundColor.b = socket.readUInt8();
+								foregroundColor.r = await socket.readUInt8();
+								foregroundColor.g = await socket.readUInt8();
+								foregroundColor.b = await socket.readUInt8();
 								break;
 
 							case 32:
-								await socket.waitBytes(4);
 								dataSize += 4;
-								foregroundColor.r = socket.readUInt8();
-								foregroundColor.g = socket.readUInt8();
-								foregroundColor.b = socket.readUInt8();
-								foregroundColor.a = socket.readUInt8();
+								foregroundColor.r = await socket.readUInt8();
+								foregroundColor.g = await socket.readUInt8();
+								foregroundColor.b = await socket.readUInt8();
+								foregroundColor.a = await socket.readUInt8();
 								break;
 						}
 					}
@@ -150,8 +139,7 @@ export class HextileDecoder implements IRectDecoder {
 
 					// AnySubrects bit
 					if (subEncoding & 0x08) {
-						await socket.waitBytes(1);
-						let subRects = socket.readUInt8();
+						let subRects = await socket.readUInt8();
 
 						if (subRects) {
 							while (subRects) {
@@ -162,8 +150,7 @@ export class HextileDecoder implements IRectDecoder {
 								if (subEncoding & 0x10) {
 									switch (bitsPerPixel) {
 										case 8:
-											await socket.waitBytes(1);
-											const index = socket.readUInt8();
+											const index = await socket.readUInt8();
 											dataSize++;
 											color.r = colorMap[index].r || 255;
 											color.g = colorMap[index].g || 255;
@@ -171,20 +158,18 @@ export class HextileDecoder implements IRectDecoder {
 											break;
 
 										case 24:
-											await socket.waitBytes(3);
 											dataSize += 3;
-											color.r = socket.readUInt8();
-											color.g = socket.readUInt8();
-											color.b = socket.readUInt8();
+											color.r = await socket.readUInt8();
+											color.g = await socket.readUInt8();
+											color.b = await socket.readUInt8();
 											break;
 
 										case 32:
-											await socket.waitBytes(4);
 											dataSize += 4;
-											color.r = socket.readUInt8();
-											color.g = socket.readUInt8();
-											color.b = socket.readUInt8();
-											color.a = socket.readUInt8();
+											color.r = await socket.readUInt8();
+											color.g = await socket.readUInt8();
+											color.b = await socket.readUInt8();
+											color.a = await socket.readUInt8();
 											break;
 									}
 								} else {
@@ -194,9 +179,8 @@ export class HextileDecoder implements IRectDecoder {
 									color.a = foregroundColor.a;
 								}
 
-								await socket.waitBytes(2);
-								const xy = socket.readUInt8();
-								const wh = socket.readUInt8();
+								const xy = await socket.readUInt8();
+								const wh = await socket.readUInt8();
 								dataSize += 2;
 
 								const sx = xy >> 4;
@@ -218,11 +202,7 @@ export class HextileDecoder implements IRectDecoder {
 
 				tiles--;
 			}
-
-			rect.data = socket.readNBytes(dataSize, initialOffset);
 			resolve();
 		});
 	}
-
-
 }

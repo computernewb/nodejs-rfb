@@ -1,15 +1,13 @@
-import { SocketBuffer } from "../socketbuffer";
-import { IRectDecoder } from "./decoder";
-import { getPixelBytePos } from "./util";
+import { SocketBuffer } from '../socketbuffer';
+import { IRectDecoder } from './decoder';
+import { getPixelBytePos } from './util';
 
-import { RectangleWithData, Color3 } from "../types";
+import { RectangleWithData, Color3 } from '../types';
 
 export class RawDecoder implements IRectDecoder {
-
 	async decode(rect: RectangleWithData, fb: Buffer, bitsPerPixel: number, colorMap: Array<Color3>, screenW: number, screenH: number, socket: SocketBuffer, depth: number): Promise<void> {
 		return new Promise(async (resolve, reject) => {
-			await socket.waitBytes(rect.width * rect.height * (bitsPerPixel / 8));
-			rect.data = socket.readNBytesOffset(rect.width * rect.height * (bitsPerPixel / 8));
+			rect.data = await socket.readNBytesOffset(rect.width * rect.height * (bitsPerPixel / 8));
 
 			for (let h = 0; h < rect.height; h++) {
 				for (let w = 0; w < rect.width; w++) {

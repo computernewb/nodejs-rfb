@@ -1,7 +1,6 @@
+import { Color3 } from '../types';
 
-import { Color3 } from "../types";
-
-export function	getPixelBytePos(x: number, y: number, width: number, height: number, stride: number = 4): number {
+export function getPixelBytePos(x: number, y: number, width: number, height: number, stride: number = 4): number {
 	return (y * width + x) * stride;
 }
 

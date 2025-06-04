@@ -50,9 +50,8 @@ export class VncSecurityType implements ISecurityType {
 
 		const response = Buffer.alloc(16);
 
-		await socket.waitBytes(16);
-		response.fill(new Uint8Array(des.update(socket.readNBytesOffset(8))), 0, 8);
-		response.fill(new Uint8Array(des.update(socket.readNBytesOffset(8))), 8, 16);
+		response.fill(new Uint8Array(des.update(await socket.readNBytesOffset(8))), 0, 8);
+		response.fill(new Uint8Array(des.update(await socket.readNBytesOffset(8))), 8, 16);
 
 		connection.write(response);
 	}

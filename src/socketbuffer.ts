@@ -1,11 +1,25 @@
+class SocketBufferAwaiter {
+	bytesWanted: number;
+	resolve: () => void;
+
+	constructor(bytesWanted: number, resolve: () => void) {
+		this.resolve = resolve;
+
+		this.bytesWanted = bytesWanted;
+	}
+}
+
 /// this is a pretty poor name.
 export class SocketBuffer {
-	public buffer: Buffer;
-	public offset: number; // :(
+	private buffer: Buffer;
+	private offset: number;
+	private debug: boolean;
+	private awaiters: SocketBufferAwaiter[] = [];
 
-	constructor() {
+	constructor(debug: boolean) {
 		this.buffer = Buffer.from([]);
 		this.offset = 0;
+		this.debug = debug;
 		this.flush();
 	}
 
@@ -23,97 +37,106 @@ export class SocketBuffer {
 		return this.buffer.toString();
 	}
 
-	includes(check: Buffer|number|string) {
+	includes(check: Buffer | number | string) {
 		return this.buffer.includes(check);
 	}
 
 	pushData(data: Buffer) {
 		this.buffer = Buffer.concat([this.buffer, data]);
+		if (data.length < 1024) {
+			this._log(`S: ${data.toString('hex')}`, true);
+		}
+		for (let i = 0; i < this.awaiters.length; i++) {
+			if (this.bytesLeft() >= this.awaiters[i].bytesWanted) {
+				this.awaiters[i].resolve();
+				this.awaiters.splice(i, 1);
+			}
+		}
 	}
 
-	readInt32BE() {
+	async readInt32BE() {
+		await this.waitBytes(4);
 		const data = this.buffer.readInt32BE(this.offset);
 		this.offset += 4;
 		return data;
 	}
 
-	readInt32LE() {
+	async readInt32LE() {
+		await this.waitBytes(4);
 		const data = this.buffer.readInt32LE(this.offset);
 		this.offset += 4;
 		return data;
 	}
 
-	readUInt32BE() {
+	async readUInt32BE() {
+		await this.waitBytes(4);
 		const data = this.buffer.readUInt32BE(this.offset);
 		this.offset += 4;
 		return data;
 	}
 
-	readUInt32LE() {
+	async readUInt32LE() {
+		await this.waitBytes(4);
 		const data = this.buffer.readUInt32LE(this.offset);
 		this.offset += 4;
 		return data;
 	}
 
-	readUInt16BE() {
+	async readUInt16BE() {
+		await this.waitBytes(2);
 		const data = this.buffer.readUInt16BE(this.offset);
 		this.offset += 2;
 		return data;
 	}
 
-	readUInt16LE() {
+	async readUInt16LE() {
+		await this.waitBytes(2);
 		const data = this.buffer.readUInt16LE(this.offset);
 		this.offset += 2;
 		return data;
 	}
 
-	readUInt8() {
+	async readUInt8(peek: boolean = false) {
+		await this.waitBytes(1);
 		const data = this.buffer.readUInt8(this.offset);
-		this.offset += 1;
+		if (!peek) {
+			this.offset += 1;
+		}
 		return data;
 	}
 
-	readInt8() {
+	async readInt8() {
+		await this.waitBytes(1);
 		const data = this.buffer.readInt8(this.offset);
 		this.offset += 1;
 		return data;
 	}
 
-	readNBytes(bytes: number, offset = this.offset) {
-		return this.buffer.slice(offset, offset + bytes);
-	}
-
-	readNBytesOffset(bytes: number) {
-		const data = this.buffer.slice(this.offset, this.offset + bytes);
+	async readNBytesOffset(bytes: number) {
+		await this.waitBytes(bytes);
+		const data = this.buffer.subarray(this.offset, this.offset + bytes);
 		this.offset += bytes;
 		return data;
-	}
-
-	setOffset(n: number) {
-		this.offset = n;
 	}
 
 	bytesLeft() {
 		return this.buffer.length - this.offset;
 	}
 
-	// name is nullable because there are Many(yay....) times it just isn't passed
-	async waitBytes(bytes: number, name: any | null = null): Promise<void> {
-		if (this.bytesLeft() >= bytes) {
-			return;
-		}
-		let counter = 0;
-		return new Promise(async (resolve, reject) => {
-			while (this.bytesLeft() < bytes) {
-				counter++;
-				// console.log('Esperando. BytesLeft: ' + this.bytesLeft() + '  Desejados: ' + bytes);
-				await this.sleep(4);
-				if (counter === 50) {
-					console.log('Stucked on ' + name + '  -  Buffer Size: ' + this.buffer.length + '   BytesLeft: ' + this.bytesLeft() + '   BytesNeeded: ' + bytes);
-				}
+	private waitBytes(bytes: number): Promise<void> {
+		return new Promise((resolve) => {
+			if (this.bytesLeft() >= bytes) {
+				resolve();
+				return;
 			}
-			resolve();
+			let awaiter = new SocketBufferAwaiter(bytes, () => resolve());
+			this.awaiters.push(awaiter);
+			return awaiter;
 		});
+	}
+
+	waitData(): Promise<void> {
+		return this.waitBytes(1);
 	}
 
 	fill(data: Buffer) {
@@ -126,9 +149,14 @@ export class SocketBuffer {
 		this.offset += data.length * repeats;
 	}
 
-	sleep(n: number): Promise<void> {
-		return new Promise((resolve, reject) => {
-			setTimeout(resolve, n);
-		});
+	/**
+	 * Print log info
+	 * @param text
+	 * @param debug
+	 */
+	private _log(text: string, debug = false) {
+		if (!debug || (debug && this.debug)) {
+			console.log(text);
+		}
 	}
 }

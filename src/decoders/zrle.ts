@@ -1,9 +1,9 @@
 import * as zlib from 'node:zlib';
-import { SocketBuffer } from "../socketbuffer";
-import { IRectDecoder } from "./decoder";
-import { applyColor, getPixelBytePos } from "./util";
+import { SocketBuffer } from '../socketbuffer';
+import { IRectDecoder } from './decoder';
+import { applyColor, getPixelBytePos } from './util';
 
-import { RectangleWithData, Color3, Color4 } from "../types";
+import { RectangleWithData, Color3, Color4 } from '../types';
 
 export class ZrleDecoder implements IRectDecoder {
 	private zlib: zlib.Inflate;
@@ -11,7 +11,7 @@ export class ZrleDecoder implements IRectDecoder {
 
 	constructor() {
 		this.zlib = zlib.createInflate({ chunkSize: 16 * 1024 * 1024, flush: zlib.constants.Z_FULL_FLUSH });
-		this.unBuffer = new SocketBuffer();
+		this.unBuffer = new SocketBuffer(false);
 
 		this.zlib.on('data', async (chunk) => {
 			this.unBuffer.pushData(chunk);
@@ -20,16 +20,11 @@ export class ZrleDecoder implements IRectDecoder {
 
 	async decode(rect: RectangleWithData, fb: Buffer, bitsPerPixel: number, colorMap: Array<Color3>, screenW: number, screenH: number, socket: SocketBuffer, depth: number): Promise<void> {
 		return new Promise(async (resolve, reject) => {
-			await socket.waitBytes(4);
+			const dataSize = await socket.readUInt32BE();
 
-			const initialOffset = socket.offset;
-			const dataSize = socket.readUInt32BE();
+			const compressedData = await socket.readNBytesOffset(dataSize);
 
-			await socket.waitBytes(dataSize);
-
-			const compressedData = socket.readNBytesOffset(dataSize);
-
-			rect.data = socket.readNBytes(dataSize + 4, initialOffset);
+			rect.data = compressedData;
 
 			this.unBuffer.flush();
 			this.zlib.write(compressedData, async () => {
@@ -41,8 +36,7 @@ export class ZrleDecoder implements IRectDecoder {
 				let totalTiles = tiles;
 
 				while (tiles) {
-					await this.unBuffer.waitBytes(1, 'tile begin.');
-					const subEncoding = this.unBuffer.readUInt8();
+					const subEncoding = await this.unBuffer.readUInt8();
 					const currTile = totalTiles - tiles;
 
 					const tileX = currTile % tilesX;
@@ -64,8 +58,7 @@ export class ZrleDecoder implements IRectDecoder {
 							for (let w = 0; w < tw; w++) {
 								const fbBytePosOffset = getPixelBytePos(tx + w, ty + h, screenW, screenH);
 								if (bitsPerPixel === 8) {
-									await this.unBuffer.waitBytes(1, 'raw 8bits');
-									const index = this.unBuffer.readUInt8();
+									const index = await this.unBuffer.readUInt8();
 									const color = colorMap[index];
 									// RGB
 									// fb.writeUInt8(color?.r || 255, fbBytePosOffset);
@@ -77,10 +70,9 @@ export class ZrleDecoder implements IRectDecoder {
 									fb.writeUInt8(color?.g || 255, fbBytePosOffset + 1);
 									fb.writeUInt8(color?.b || 255, fbBytePosOffset);
 								} else if (bitsPerPixel === 24 || (bitsPerPixel === 32 && depth === 24)) {
-									await this.unBuffer.waitBytes(3, 'raw 24bits');
-									fb.writeUInt8(this.unBuffer.readUInt8(), fbBytePosOffset + 2);
-									fb.writeUInt8(this.unBuffer.readUInt8(), fbBytePosOffset + 1);
-									fb.writeUInt8(this.unBuffer.readUInt8(), fbBytePosOffset);
+									fb.writeUInt8(await this.unBuffer.readUInt8(), fbBytePosOffset + 2);
+									fb.writeUInt8(await this.unBuffer.readUInt8(), fbBytePosOffset + 1);
+									fb.writeUInt8(await this.unBuffer.readUInt8(), fbBytePosOffset);
 								} else if (bitsPerPixel === 32) {
 									// RGB
 									// fb.writeUInt8(rect.data.readUInt8(bytePosOffset), fbBytePosOffset);
@@ -88,10 +80,9 @@ export class ZrleDecoder implements IRectDecoder {
 									// fb.writeUInt8(rect.data.readUInt8(bytePosOffset + 2), fbBytePosOffset + 2);
 
 									// BGR
-									await this.unBuffer.waitBytes(4, 'raw 32bits');
-									fb.writeUInt8(this.unBuffer.readUInt8(), fbBytePosOffset + 2);
-									fb.writeUInt8(this.unBuffer.readUInt8(), fbBytePosOffset + 1);
-									fb.writeUInt8(this.unBuffer.readUInt8(), fbBytePosOffset);
+									fb.writeUInt8(await this.unBuffer.readUInt8(), fbBytePosOffset + 2);
+									fb.writeUInt8(await this.unBuffer.readUInt8(), fbBytePosOffset + 1);
+									fb.writeUInt8(await this.unBuffer.readUInt8(), fbBytePosOffset);
 									this.unBuffer.readUInt8();
 								}
 								// Alpha
@@ -102,20 +93,17 @@ export class ZrleDecoder implements IRectDecoder {
 						// Single Color
 						let color: Color4 = { r: 0, g: 0, b: 0, a: 255 };
 						if (bitsPerPixel === 8) {
-							await this.unBuffer.waitBytes(1, 'single color 8bits');
-							const index = this.unBuffer.readUInt8();
-							color = (colorMap[index] as Color4);
+							const index = await this.unBuffer.readUInt8();
+							color = colorMap[index] as Color4;
 						} else if (bitsPerPixel === 24 || (bitsPerPixel === 32 && depth === 24)) {
-							await this.unBuffer.waitBytes(3, 'single color 24bits');
-							color.r = this.unBuffer.readUInt8();
-							color.g = this.unBuffer.readUInt8();
-							color.b = this.unBuffer.readUInt8();
+							color.r = await this.unBuffer.readUInt8();
+							color.g = await this.unBuffer.readUInt8();
+							color.b = await this.unBuffer.readUInt8();
 						} else if (bitsPerPixel === 32) {
-							await this.unBuffer.waitBytes(4, 'single color 32bits');
-							color.r = this.unBuffer.readUInt8();
-							color.g = this.unBuffer.readUInt8();
-							color.b = this.unBuffer.readUInt8();
-							color.a = this.unBuffer.readUInt8();
+							color.r = await this.unBuffer.readUInt8();
+							color.g = await this.unBuffer.readUInt8();
+							color.b = await this.unBuffer.readUInt8();
+							color.a = await this.unBuffer.readUInt8();
 						}
 						applyColor(tw, th, tx, ty, screenW, screenH, color, fb);
 					} else if (subEncoding >= 2 && subEncoding <= 16) {
@@ -124,20 +112,18 @@ export class ZrleDecoder implements IRectDecoder {
 						for (let x = 0; x < subEncoding; x++) {
 							let color;
 							if (bitsPerPixel === 24 || (bitsPerPixel === 32 && depth === 24)) {
-								await this.unBuffer.waitBytes(3, 'palette 24 bits');
 								color = {
-									r: this.unBuffer.readUInt8(),
-									g: this.unBuffer.readUInt8(),
-									b: this.unBuffer.readUInt8(),
+									r: await this.unBuffer.readUInt8(),
+									g: await this.unBuffer.readUInt8(),
+									b: await this.unBuffer.readUInt8(),
 									a: 255
 								};
 							} else if (bitsPerPixel === 32) {
-								await this.unBuffer.waitBytes(3, 'palette 32 bits');
 								color = {
-									r: this.unBuffer.readUInt8(),
-									g: this.unBuffer.readUInt8(),
-									b: this.unBuffer.readUInt8(),
-									a: this.unBuffer.readUInt8()
+									r: await this.unBuffer.readUInt8(),
+									g: await this.unBuffer.readUInt8(),
+									b: await this.unBuffer.readUInt8(),
+									a: await this.unBuffer.readUInt8()
 								};
 							}
 							palette.push(color);
@@ -153,11 +139,10 @@ export class ZrleDecoder implements IRectDecoder {
 						for (let h = 0; h < th; h++) {
 							for (let w = 0; w < tw; w++) {
 								if (bitPos === 0 || w === 0) {
-									await this.unBuffer.waitBytes(1, 'palette index data');
-									byte = this.unBuffer.readUInt8();
+									byte = await this.unBuffer.readUInt8();
 									bitPos = 0;
 								}
-								let color : Color4 = { r: 0, g: 0, b: 0, a: 255 };
+								let color: Color4 = { r: 0, g: 0, b: 0, a: 255 };
 								switch (bitsPerIndex) {
 									case 1:
 										if (bitPos === 0) {
@@ -227,28 +212,24 @@ export class ZrleDecoder implements IRectDecoder {
 							for (let w = 0; w < tw; w++) {
 								if (!runLength) {
 									if (bitsPerPixel === 24 || (bitsPerPixel === 32 && depth === 24)) {
-										await this.unBuffer.waitBytes(3, 'rle 24bits');
 										color = {
-											r: this.unBuffer.readUInt8(),
-											g: this.unBuffer.readUInt8(),
-											b: this.unBuffer.readUInt8(),
+											r: await this.unBuffer.readUInt8(),
+											g: await this.unBuffer.readUInt8(),
+											b: await this.unBuffer.readUInt8(),
 											a: 255
 										};
 									} else if (bitsPerPixel === 32) {
-										await this.unBuffer.waitBytes(4, 'rle 32bits');
 										color = {
-											r: this.unBuffer.readUInt8(),
-											g: this.unBuffer.readUInt8(),
-											b: this.unBuffer.readUInt8(),
-											a: this.unBuffer.readUInt8()
+											r: await this.unBuffer.readUInt8(),
+											g: await this.unBuffer.readUInt8(),
+											b: await this.unBuffer.readUInt8(),
+											a: await this.unBuffer.readUInt8()
 										};
 									}
-									await this.unBuffer.waitBytes(1, 'rle runsize');
-									let runSize = this.unBuffer.readUInt8();
+									let runSize = await this.unBuffer.readUInt8();
 									while (runSize === 255) {
 										runLength += runSize;
-										await this.unBuffer.waitBytes(1, 'rle runsize');
-										runSize = this.unBuffer.readUInt8();
+										runSize = await this.unBuffer.readUInt8();
 									}
 									runLength += runSize + 1;
 									totalRun += runLength;
@@ -270,20 +251,18 @@ export class ZrleDecoder implements IRectDecoder {
 						for (let x = 0; x < paletteSize; x++) {
 							let color;
 							if (bitsPerPixel === 24 || (bitsPerPixel === 32 && depth === 24)) {
-								await this.unBuffer.waitBytes(3, 'paletterle 24bits');
 								color = {
-									r: this.unBuffer.readUInt8(),
-									g: this.unBuffer.readUInt8(),
-									b: this.unBuffer.readUInt8(),
+									r: await this.unBuffer.readUInt8(),
+									g: await this.unBuffer.readUInt8(),
+									b: await this.unBuffer.readUInt8(),
 									a: 255
 								};
 							} else if (bitsPerPixel === 32) {
-								await this.unBuffer.waitBytes(4, 'paletterle 32bits');
 								color = {
-									r: this.unBuffer.readUInt8(),
-									g: this.unBuffer.readUInt8(),
-									b: this.unBuffer.readUInt8(),
-									a: this.unBuffer.readUInt8()
+									r: await this.unBuffer.readUInt8(),
+									g: await this.unBuffer.readUInt8(),
+									b: await this.unBuffer.readUInt8(),
+									a: await this.unBuffer.readUInt8()
 								};
 							}
 							palette.push(color);
@@ -295,8 +274,7 @@ export class ZrleDecoder implements IRectDecoder {
 						for (let h = 0; h < th; h++) {
 							for (let w = 0; w < tw; w++) {
 								if (!runLength) {
-									await this.unBuffer.waitBytes(1, 'paletterle indexdata');
-									const colorIndex = this.unBuffer.readUInt8();
+									const colorIndex = await this.unBuffer.readUInt8();
 
 									if (!(colorIndex & 128)) {
 										// Run de tamanho 1
@@ -304,12 +282,10 @@ export class ZrleDecoder implements IRectDecoder {
 										runLength = 1;
 									} else {
 										color = palette[colorIndex - 128] ?? { r: 0, g: 0, b: 0, a: 255 };
-										await this.unBuffer.waitBytes(1, 'paletterle runlength');
-										let runSize = this.unBuffer.readUInt8();
+										let runSize = await this.unBuffer.readUInt8();
 										while (runSize === 255) {
 											runLength += runSize;
-											await this.unBuffer.waitBytes(1, 'paletterle runlength');
-											runSize = this.unBuffer.readUInt8();
+											runSize = await this.unBuffer.readUInt8();
 										}
 										runLength += runSize + 1;
 									}
@@ -336,5 +312,4 @@ export class ZrleDecoder implements IRectDecoder {
 			});
 		});
 	}
-
 }
