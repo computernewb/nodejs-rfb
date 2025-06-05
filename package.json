@@ -1,6 +1,6 @@
 {
   "name": "@computernewb/nodejs-rfb",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Pure nodejs VNC (RFC 6143 / RFB Protocol) client, based on vnc-rfb-client",
   "author": "Filipe Calaça Barbosa, ayunami2000, dither, modeco80",
   "license": "MIT",

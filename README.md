@@ -21,14 +21,14 @@ Fork by Computernewb of Filipe Calaça's original [vnc-rfb-client](https://githu
 
 ## Installation
 ```sh
-yarn add nodejs-rfb # Yarn
-npm install nodejs-rfb # NPM
+yarn add @computernewb/nodejs-rfb # Yarn
+npm install @computernewb/nodejs-rfb # NPM
 ```
 
 ## Usage
 
 ```ts
-import { VncClient } from 'nodejs-rfb';
+import { VncClient } from '@computernewb/nodejs-rfb';
 
 const initOptions = {
     debug: false, // Set debug logging
@@ -117,7 +117,7 @@ client.on('rectProcessed', (rect) => {
 ### Save frame to jpg
 
 ```javascript
-import { VncClient } from 'nodejs-rfb';
+import { VncClient } from '@computernewb/nodejs-rfb';
 import { Jimp } from 'jimp';
 
 const client = new VncClient();
@@ -149,7 +149,7 @@ client.on('authError', () => {
 ### Record session with FFMPEG
 
 ```javascript
-import { VncClient } from 'nodejs-rfb';
+import { VncClient } from '@computernewb/nodejs-rfb';
 import { spawn } from 'child_process';
 const fps = 10;
 

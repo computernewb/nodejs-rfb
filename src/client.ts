@@ -11,7 +11,7 @@ import { consts } from './constants.js';
 
 import * as net from 'node:net';
 
-import { SocketBuffer } from './socketbuffer.js';
+import { SocketBuffer, SocketBufferEndedError } from './socketbuffer.js';
 
 import { RectangleWithData, Color3, PixelFormat, Cursor } from './types.js';
 import { ISecurityType } from './security/securitytype.js';
@@ -255,19 +255,27 @@ export class VncClient extends EventEmitter {
 	}
 
 	private async _readWorker() {
-		while (this._connection?.readable) {
-			if (this._version == '') {
-				await this._handleVersion();
-			} else if (this._waitingSecurityTypes) {
-				await this._handleSecurityTypes();
-			} else if (this._expectingChallenge) {
-				await this._handleAuthChallenge();
-			} else if (this._waitingSecurityResult) {
-				await this._handleSecurityResult();
-			} else if (this._waitingServerInit) {
-				await this._handleServerInit();
-			} else {
-				await this._handleData();
+		while (!this._connection?.closed) {
+			try {
+				if (this._version == '') {
+					await this._handleVersion();
+				} else if (this._waitingSecurityTypes) {
+					await this._handleSecurityTypes();
+				} else if (this._expectingChallenge) {
+					await this._handleAuthChallenge();
+				} else if (this._waitingSecurityResult) {
+					await this._handleSecurityResult();
+				} else if (this._waitingServerInit) {
+					await this._handleServerInit();
+				} else {
+					await this._handleData();
+				}
+			} catch (er) {
+				if (er instanceof SocketBufferEndedError) {
+					break;
+				} else {
+					throw er;
+				}
 			}
 
 			this._socketBuffer.flush(true);
@@ -863,9 +871,9 @@ export class VncClient extends EventEmitter {
 		this._audioFrequency = 22050;
 
 		this._waitingSecurityTypes = false;
-
-		this._expectingChallenge = false;
 		this._waitingSecurityResult = false;
+		this._expectingChallenge = false;
+		this._waitingServerInit = false;
 
 		this._frameBufferReady = false;
 		this._firstFrameReceived = false;
@@ -893,7 +901,7 @@ export class VncClient extends EventEmitter {
 		this._colorMap = [];
 		this.fb = Buffer.from([]);
 
-		this._socketBuffer?.flush(false);
+		this._socketBuffer?.end();
 
 		this._cursor = {
 			width: 0,

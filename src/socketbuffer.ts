@@ -1,11 +1,19 @@
 class SocketBufferAwaiter {
 	bytesWanted: number;
 	resolve: () => void;
+	reject: (e: Error) => void;
 
-	constructor(bytesWanted: number, resolve: () => void) {
+	constructor(bytesWanted: number, resolve: () => void, reject: (e: Error) => void) {
 		this.resolve = resolve;
+		this.reject = reject;
 
 		this.bytesWanted = bytesWanted;
+	}
+}
+
+export class SocketBufferEndedError extends Error {
+	constructor(message?: string) {
+		super(message);
 	}
 }
 
@@ -21,6 +29,15 @@ export class SocketBuffer {
 		this.offset = 0;
 		this.debug = debug;
 		this.flush();
+	}
+
+	end(reason?: string) {
+		let er = new SocketBufferEndedError(reason);
+		for (let i = 0; i < this.awaiters.length; i++) {
+			this.awaiters[i].reject(er);
+			this.awaiters.splice(i, 1);
+		}
+		this.flush(false);
 	}
 
 	flush(keep = true) {
@@ -124,12 +141,16 @@ export class SocketBuffer {
 	}
 
 	private waitBytes(bytes: number): Promise<void> {
-		return new Promise((resolve) => {
+		return new Promise((resolve, reject) => {
 			if (this.bytesLeft() >= bytes) {
 				resolve();
 				return;
 			}
-			let awaiter = new SocketBufferAwaiter(bytes, () => resolve());
+			let awaiter = new SocketBufferAwaiter(
+				bytes,
+				() => resolve(),
+				(e) => reject(e)
+			);
 			this.awaiters.push(awaiter);
 			return awaiter;
 		});
