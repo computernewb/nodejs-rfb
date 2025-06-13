@@ -609,7 +609,9 @@ export class VncClient extends EventEmitter {
 				return;
 
 			case consts.serverMsgTypes.qemuAudio:
-				await this._handleQemuAudio();
+				while (this._socketBuffer.buffer[0] === consts.serverMsgTypes.qemuAudio) {
+					await this._handleQemuAudio();
+				}
 				return;
 		}
 		if (this._version === '3.6') {
