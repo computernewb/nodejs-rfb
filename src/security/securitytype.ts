@@ -1,7 +1,7 @@
+import { Duplex } from 'node:stream';
 import { SocketBuffer } from '../socketbuffer';
-import * as net from 'node:net';
 
 export interface ISecurityType {
 	getName(): string;
-	authenticate(rfbVer: string, socket: SocketBuffer, connection: net.Socket, auth: object): Promise<void>;
+	authenticate(rfbVer: string, socket: SocketBuffer, connection: Duplex, auth: object): Promise<void>;
 }
