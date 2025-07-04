@@ -1,10 +1,9 @@
-import { Socket } from 'net';
 import { SocketBuffer } from '../socketbuffer';
 import { ISecurityType } from './securitytype';
 import * as crypto from 'crypto';
-import * as fs from 'fs/promises';
 // @ts-ignore
 import MD4 from 'js-md4';
+import { Duplex } from 'stream';
 
 const NTLM_SIGNATURE = 'NTLMSSP\0';
 const NTLM_NEGOTIATE_FLAGS = 2718478855;
@@ -35,7 +34,7 @@ export class NtlmSecurityType implements ISecurityType {
 		return 'Windows NTLM';
 	}
 
-	async authenticate(rfbVer: string, socket: SocketBuffer, connection: Socket, auth: NtlmAuthInfo): Promise<void> {
+	async authenticate(rfbVer: string, socket: SocketBuffer, connection: Duplex, auth: NtlmAuthInfo): Promise<void> {
 		if (!auth.username || !auth.password) {
 			throw new Error('No username or password supplied for NTLM authentication.');
 		}
@@ -86,7 +85,7 @@ export class NtlmSecurityType implements ISecurityType {
 		buf.writeUint8(15, offset + 7);
 	}
 
-	private sendNtlmNegotiate(connection: Socket, workstation: string, domain: string) {
+	private sendNtlmNegotiate(connection: Duplex, workstation: string, domain: string) {
 		let len = 40 + workstation.length + domain.length;
 		let buf = Buffer.alloc(len + 4);
 		// header
@@ -216,7 +215,7 @@ export class NtlmSecurityType implements ISecurityType {
 		return ntChallengeResponse;
 	}
 
-	private async sendNtlmAuthenticate(connection: Socket, challenge: NtLmChallenge, ntChallengeResponse: Buffer, auth: NtlmAuthInfo) {
+	private async sendNtlmAuthenticate(connection: Duplex, challenge: NtLmChallenge, ntChallengeResponse: Buffer, auth: NtlmAuthInfo) {
 		let workstationLengthW = auth.workstation.length * 2;
 		let usernameLengthW = auth.username.length * 2;
 		let domainLengthW = auth.domain.length * 2;

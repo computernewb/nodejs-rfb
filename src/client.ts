@@ -10,6 +10,10 @@ import { EventEmitter } from 'node:events';
 import { consts } from './constants.js';
 
 import * as net from 'node:net';
+import * as ws from 'ws';
+import { ClientRequestArgs } from 'node:http';
+
+import { Duplex } from 'node:stream';
 
 import { SocketBuffer, SocketBufferEndedError } from './socketbuffer.js';
 
@@ -89,7 +93,7 @@ export class VncClient extends EventEmitter {
 
 	public encodings: number[];
 
-	private _connection: net.Socket | null = null;
+	private _stream: Duplex| null = null;
 	private _socketBuffer: SocketBuffer;
 
 	static get consts() {
@@ -119,19 +123,19 @@ export class VncClient extends EventEmitter {
 		return this._version;
 	}
 
-	/**
-	 * Return the local port used by the client
-	 */
-	get localPort() {
-		return this._connection ? this._connection?.localPort : 0;
-	}
-
 	constructor(options: any = { debug: false, fps: 0, encodings: [] }) {
 		super();
 
 		this._socketBuffer = new SocketBuffer(options.debug);
 
 		this.resetState();
+
+		if (options.auth) {
+			this._auth = options.auth;
+		}
+
+		this._set8BitColor = options.set8BitColor || false;
+
 		this.debug = options.debug || false;
 		this._fps = Number(options.fps) || 0;
 		// Calculate interval to meet configured FPS
@@ -200,62 +204,72 @@ export class VncClient extends EventEmitter {
 
 	/**
 	 * Starts the connection with the VNC server
-	 * @param options
+	 * @param stream An open Duplex stream connected to an RFB server
 	 */
-	connect(
-		options: any /* = {
-			host: '',
-			password: '',
-			path: '',
-			set8BitColor: false,
-			port: 5900
-		} */
-	) {
-		if (options.auth) {
-			this._auth = options.auth;
+	open(stream: Duplex) {
+		if (!stream.writable || !stream.readable) {
+			throw new Error('Stream must be readable and writable.');
 		}
 
-		this._set8BitColor = options.set8BitColor || false;
-
-		if (options.path === null) {
-			if (!options.host) {
-				throw new Error('Host missing.');
-			}
-			this._connection = net.connect(options.port || 5900, options.host);
-
-			// disable nagle's algorithm for TCP
-			this._connection?.setNoDelay();
-		} else {
-			// unix socket. bodged in but oh well
-			this._connection = net.connect(options.path);
+		if (this._stream) {
+			this.disconnect();
 		}
 
-		this._connection?.on('connect', () => {
-			this._connected = true;
-			this.emit('connected');
-			this._readWorker();
-		});
+		this._stream = stream;
+		this._connected = true;
+		this.emit('connected');
+		this._readWorker();
 
-		this._connection?.on('close', () => {
+		this._stream?.on('close', () => {
 			this.resetState();
 			this.emit('closed');
 		});
 
-		this._connection?.on('timeout', () => {
-			this.emit('connectTimeout');
-		});
-
-		this._connection?.on('error', (err) => {
+		this._stream?.on('error', (err) => {
 			this.emit('connectError', err);
 		});
 
-		this._connection?.on('data', async (data) => {
+		this._stream?.on('data', async (data) => {
 			this._socketBuffer.pushData(data);
 		});
 	}
 
+	/**
+	 * Connect to a TCP (or UNIX socket) VNC server
+	 */
+	connectTCP(options: net.NetConnectOpts) {
+		let conn = net.connect(options);
+
+		conn.on('connect', () => {
+			this.open(conn);
+		});
+
+		conn.on('connectionAttemptFailed', (ip, port, family, error) => {
+			this.emit('connectError', error);
+		});
+
+		conn.on('timeout', () => {
+			this.emit('connectTimeout');
+		});
+	}
+
+	/**
+	 * Connect to a Websockified VNC server
+	 */
+	connectWS(address: string | URL, protocols?: string | string[], options?: ws.ClientOptions | ClientRequestArgs) {
+		let socket = new ws.WebSocket(address, protocols, options);
+
+		socket.on('open', () => {
+			this.open(ws.createWebSocketStream(socket));
+		});
+
+		socket.on('error', (error) => {
+			this.emit('connectError', error);
+		});
+	}
+
 	private async _readWorker() {
-		while (!this._connection?.closed) {
+		while (!this._stream?.closed) {
 			try {
 				if (this._version == '') {
 					await this._handleVersion();
@@ -286,8 +300,8 @@ export class VncClient extends EventEmitter {
 	 * Disconnect the client
 	 */
 	disconnect() {
-		if (this._connection) {
-			this._connection?.end();
+		if (this._stream) {
+			this._stream?.end();
 			this.resetState();
 			this.emit('disconnected');
 		}
@@ -303,7 +317,7 @@ export class VncClient extends EventEmitter {
 	 * @param height - Height of the update area desired, usually client height
 	 */
 	requestFrameUpdate(full = false, incremental = 1, x = 0, y = 0, width = this.clientWidth, height = this.clientHeight) {
-		if ((this._frameBufferReady || full) && this._connection && !this._rects) {
+		if ((this._frameBufferReady || full) && this._stream && !this._rects) {
 			// Request data
 			const message = Buffer.alloc(10);
 			message.writeUInt8(3); // Message type
@@ -313,7 +327,7 @@ export class VncClient extends EventEmitter {
 			message.writeUInt16BE(width, 6); // Width
 			message.writeUInt16BE(height, 8); // Height
 
-			this._connection?.write(message);
+			this._stream?.write(message);
 
 			this._frameBufferReady = true;
 		}
@@ -327,19 +341,19 @@ export class VncClient extends EventEmitter {
 		// Handshake, negotiating protocol version
 		if (ver === consts.versionString.V3_003) {
 			this._log('Sending 3.3', true);
-			this._connection?.write(consts.versionString.V3_003);
+			this._stream?.write(consts.versionString.V3_003);
 			this._version = '3.3';
 		} else if (ver === consts.versionString.V3_006) {
 			this._log('Sending 3.6 (VMRC)', true);
-			this._connection?.write(consts.versionString.V3_006);
+			this._stream?.write(consts.versionString.V3_006);
 			this._version = '3.6';
 		} else if (ver === consts.versionString.V3_007) {
 			this._log('Sending 3.7', true);
-			this._connection?.write(consts.versionString.V3_007);
+			this._stream?.write(consts.versionString.V3_007);
 			this._version = '3.7';
 		} else if (ver === consts.versionString.V3_008) {
 			this._log('Sending 3.8', true);
-			this._connection?.write(consts.versionString.V3_008);
+			this._stream?.write(consts.versionString.V3_008);
 			this._version = '3.8';
 		} else {
 			this._log(`Unknown Protocol Version (not an RFB server?)`, true);
@@ -374,7 +388,7 @@ export class VncClient extends EventEmitter {
 
 			// Send selected type
 			if (selectedType) {
-				this._connection?.write(Buffer.from([selectedType]));
+				this._stream?.write(Buffer.from([selectedType]));
 			}
 		} else {
 			// Server dictates security type
@@ -410,7 +424,7 @@ export class VncClient extends EventEmitter {
 		}
 
 		this._log(`Authenticating using ${this._securityType.getName()}`, true);
-		await this._securityType.authenticate(this._version, this._socketBuffer, this._connection!, this._auth);
+		await this._securityType.authenticate(this._version, this._socketBuffer, this._stream!, this._auth);
 		this._log('Authentication finished, waiting for SecurityResult', true);
 		this._expectingChallenge = false;
 		this._waitingSecurityResult = true;
@@ -461,7 +475,7 @@ export class VncClient extends EventEmitter {
 			this._setPixelFormatToColorMap();
 		}
 		if (this._version === '3.6') {
-			this._connection?.write(Buffer.from([0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x2a]));
+			this._stream?.write(Buffer.from([0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x2a]));
 			let vm = (this._auth as NtlmAuthInfo).vm ?? '';
 
 			let buf = Buffer.alloc(12 + vm.length);
@@ -470,7 +484,7 @@ export class VncClient extends EventEmitter {
 			buf[7] = 0x02;
 			buf.writeUint32BE(vm.length, 8);
 			buf.write(vm, 12, 'utf8');
-			this._connection?.write(buf);
+			this._stream?.write(buf);
 			this.setPixelFormat({
 				bitsPerPixel: 32,
 				depth: 24,
@@ -526,7 +540,7 @@ export class VncClient extends EventEmitter {
 		message.writeUint8(format.greenShift, 15);
 		message.writeUint8(format.blueShift, 16);
 
-		this._connection?.write(message);
+		this._stream?.write(message);
 		this.pixelFormat = format;
 	}
 
@@ -572,7 +586,7 @@ export class VncClient extends EventEmitter {
 			message.writeInt32BE(consts.encodings.raw, offset + 4);
 		}
 
-		this._connection?.write(message);
+		this._stream?.write(message);
 	}
 
 	/**
@@ -582,7 +596,7 @@ export class VncClient extends EventEmitter {
 		//this._log(`Sending clientInit`);
 		this._waitingServerInit = true;
 		// Shared bit set
-		this._connection?.write('1');
+		this._stream?.write('1');
 	}
 
 	/**
@@ -849,8 +863,8 @@ export class VncClient extends EventEmitter {
 	 * Reset the class state
 	 */
 	resetState() {
-		if (this._connection) {
-			this._connection?.end();
+		if (this._stream) {
+			this._stream?.end();
 		}
 
 		if (this._timerPointer) {
@@ -859,7 +873,7 @@ export class VncClient extends EventEmitter {
 
 		this._timerPointer = null;
 
-		//this._connection = null;
+		//this._stream = null;
 
 		this._connected = false;
 		this._authenticated = false;
@@ -931,7 +945,7 @@ export class VncClient extends EventEmitter {
 
 		message.writeUInt32BE(key, 4); // Key code
 
-		this._connection?.write(message);
+		this._stream?.write(message);
 	}
 
 	/**
@@ -951,7 +965,7 @@ export class VncClient extends EventEmitter {
 		this._cursor.posX = xPosition;
 		this._cursor.posY = yPosition;
 
-		this._connection?.write(message);
+		this._stream?.write(message);
 	}
 
 	/**
@@ -968,7 +982,7 @@ export class VncClient extends EventEmitter {
 		message.writeUInt32BE(textBuffer.length, 4); // Padding
 		textBuffer.copy(message, 8);
 
-		this._connection?.write(message);
+		this._stream?.write(message);
 	}
 
 	sendAudio(enable: boolean) {
@@ -976,7 +990,7 @@ export class VncClient extends EventEmitter {
 		message.writeUInt8(consts.clientMsgTypes.qemuAudio); // Message type
 		message.writeUInt8(1, 1); // Submessage Type
 		message.writeUInt16BE(enable ? 0 : 1, 2); // Operation
-		this._connection?.write(message);
+		this._stream?.write(message);
 	}
 
 	sendAudioConfig(channels: number, frequency: number) {
@@ -987,7 +1001,7 @@ export class VncClient extends EventEmitter {
 		message.writeUInt8(0 /*U8*/, 4); // Sample Format
 		message.writeUInt8(channels, 5); // Number of Channels
 		message.writeUInt32BE(frequency, 6); // Frequency
-		this._connection?.write(message);
+		this._stream?.write(message);
 	}
 
 	/**
