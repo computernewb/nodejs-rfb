@@ -738,8 +738,8 @@ export class VncClient extends EventEmitter {
 			};
 
 			if (rect.encoding === consts.encodings.pseudoQemuAudio) {
-				this.sendAudio(true);
 				this.sendAudioConfig(this._audioChannels, this._audioFrequency); //todo: future: setFrequency(...) to update mid thing
+				this.sendAudio(true);
 			} else if (rect.encoding === consts.encodings.pseudoQemuPointerMotionChange) {
 				this._relativePointer = rect.x == 0;
 			} else if (rect.encoding === consts.encodings.pseudoCursor) {
