@@ -341,6 +341,10 @@ export class VncClient extends EventEmitter {
 			this._log('Sending 3.8', true);
 			this._connection?.write(consts.versionString.V3_008);
 			this._version = '3.8';
+		} else if (ver === consts.versionString.V3_889) {
+			this._log('Sending 3.889 (must be a Mac)', true);
+			this._connection?.write(consts.versionString.V3_889);
+			this._version = '3.8';
 		} else {
 			this._log(`Unknown Protocol Version (not an RFB server?)`, true);
 			this._log(ver, true);
