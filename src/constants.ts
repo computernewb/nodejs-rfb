@@ -44,5 +44,13 @@ export const consts = {
 		None: 1,
 		VNC: 2,
 		NTLM: 4
+	},
+	qemuAudioFormats: {
+		u8: 0,
+		s8: 1,
+		u16: 2,
+		s16: 3,
+		u32: 4,
+		s32: 5
 	}
 };

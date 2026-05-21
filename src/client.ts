@@ -18,8 +18,10 @@ import { ISecurityType } from './security/securitytype.js';
 import { NoneSecurityType } from './security/none.js';
 import { VncSecurityType } from './security/vnc.js';
 import { NtlmAuthInfo, NtlmSecurityType } from './security/ntlm.js';
+
 export class VncClient extends EventEmitter {
 	// These are in no particular order.
+	// TODO: Rework default initialisation, as some of these are defined *three times*
 
 	public debug: boolean = false;
 
@@ -28,8 +30,9 @@ export class VncClient extends EventEmitter {
 	private _version: string = '';
 	private _auth: object = {};
 
+	private _audioFormat: number = consts.qemuAudioFormats.s16;
 	private _audioChannels: number = 2;
-	private _audioFrequency: number = 22050;
+	private _audioFrequency: number = 44100;
 
 	private _rects: number = 0;
 
@@ -94,7 +97,8 @@ export class VncClient extends EventEmitter {
 
 	static get consts() {
 		return {
-			encodings: consts.encodings
+			encodings: consts.encodings,
+			qemuAudioFormats: consts.qemuAudioFormats
 		};
 	}
 
@@ -143,8 +147,9 @@ export class VncClient extends EventEmitter {
 				? options.encodings
 				: [consts.encodings.copyRect, consts.encodings.zrle, consts.encodings.hextile, consts.encodings.raw, consts.encodings.pseudoDesktopSize];
 
+		this._audioFormat = options.audioFormat || consts.qemuAudioFormats.s16;
 		this._audioChannels = options.audioChannels || 2;
-		this._audioFrequency = options.audioFrequency || 22050;
+		this._audioFrequency = options.audioFrequency || 44100;
 
 		this._rects = 0;
 
@@ -738,8 +743,8 @@ export class VncClient extends EventEmitter {
 			};
 
 			if (rect.encoding === consts.encodings.pseudoQemuAudio) {
+				this.sendAudioConfig(this._audioChannels, this._audioFrequency, this._audioFormat);
 				this.sendAudio(true);
-				this.sendAudioConfig(this._audioChannels, this._audioFrequency); //todo: future: setFrequency(...) to update mid thing
 			} else if (rect.encoding === consts.encodings.pseudoQemuPointerMotionChange) {
 				this._relativePointer = rect.x == 0;
 			} else if (rect.encoding === consts.encodings.pseudoCursor) {
@@ -831,18 +836,17 @@ export class VncClient extends EventEmitter {
 
 	async _handleQemuAudio() {
 		await this._socketBuffer.readNBytesOffset(2);
-		let operation = await this._socketBuffer.readUInt16BE();
-		if (operation == 2) {
+		const operation = await this._socketBuffer.readUInt16BE();
+
+		if (operation == 0) {
+			this.emit('audioStreamEnd');
+		} else if (operation == 1) {
+			this.emit('audioStreamStart');
+		} else if (operation == 2) {
 			const length = await this._socketBuffer.readUInt32BE();
-
-			//this._log(`Audio received. Length: ${length}.`)
-
-			let audioBuffer = await this._socketBuffer.readNBytesOffset(length);
-
-			this._audioData = audioBuffer;
+			this._audioData = await this._socketBuffer.readNBytesOffset(length);
+			this.emit('audioStream', this._audioData);
 		}
-
-		this.emit('audioStream', this._audioData);
 	}
 
 	/**
@@ -867,8 +871,9 @@ export class VncClient extends EventEmitter {
 
 		this._auth = {};
 
+		this._audioFormat = consts.qemuAudioFormats.s16;
 		this._audioChannels = 2;
-		this._audioFrequency = 22050;
+		this._audioFrequency = 44100;
 
 		this._waitingSecurityTypes = false;
 		this._waitingSecurityResult = false;
@@ -979,12 +984,12 @@ export class VncClient extends EventEmitter {
 		this._connection?.write(message);
 	}
 
-	sendAudioConfig(channels: number, frequency: number) {
+	sendAudioConfig(channels: number, frequency: number, format: number) {
 		const message = Buffer.alloc(10);
 		message.writeUInt8(consts.clientMsgTypes.qemuAudio); // Message type
 		message.writeUInt8(1, 1); // Submessage Type
 		message.writeUInt16BE(2, 2); // Operation
-		message.writeUInt8(0 /*U8*/, 4); // Sample Format
+		message.writeUInt8(format, 4); // Sample Format
 		message.writeUInt8(channels, 5); // Number of Channels
 		message.writeUInt32BE(frequency, 6); // Frequency
 		this._connection?.write(message);
