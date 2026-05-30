@@ -30,9 +30,9 @@ export class VncClient extends EventEmitter {
 	private _version: string = '';
 	private _auth: object = {};
 
-	private _audioFormat: number = consts.qemuAudioFormats.s16;
-	private _audioChannels: number = 2;
-	private _audioFrequency: number = 44100;
+	private _audioFormat: number;
+	private _audioChannels: number;
+	private _audioFrequency: number;
 
 	private _rects: number = 0;
 
@@ -874,10 +874,6 @@ export class VncClient extends EventEmitter {
 		this._version = '';
 
 		this._auth = {};
-
-		this._audioFormat = consts.qemuAudioFormats.s16;
-		this._audioChannels = 2;
-		this._audioFrequency = 44100;
 
 		this._waitingSecurityTypes = false;
 		this._waitingSecurityResult = false;
